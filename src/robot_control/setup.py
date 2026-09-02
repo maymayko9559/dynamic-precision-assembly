@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob  
 
 package_name = 'robot_control'
 
@@ -10,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*.launch.py'))),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,6 +27,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'assembly_controller = robot_control.assembly_controller:main',
+            'insertion_controller = robot_control.insertion_controller:main',
+            'motion_planner = robot_control.motion_planner:main',
+            'target_manager = robot_control.target_manager:main',
         ],
     },
 )

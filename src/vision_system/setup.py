@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob  
 
 package_name = 'vision_system'
 
@@ -10,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*.launch.py'))),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,6 +27,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'detection_node = vision_system.detection_node:main',
+            'coordinate_transform = vision_system.coordinate_transform:main',
+            'image_processing = vision_system.image_processing:main',
+            'shape_detector = vision_system.shape_detector:main',
         ],
     },
 )
