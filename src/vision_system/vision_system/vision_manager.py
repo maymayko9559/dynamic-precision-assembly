@@ -115,8 +115,42 @@ class VisionManager(Node):
 
 
         try:
+        
+            # =====================================================
             # ROS Image -> OpenCV Image
+            # =====================================================
+
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+
+
+            # =====================================================
+            # Aruco Board Detection
+            # =====================================================
+
+            corners, ids = self.board_detector.detect(frame)
+
+
+            # =====================================================
+            # Debug Drawing
+            # =====================================================
+
+            frame = self.board_detector.draw_board(
+                        frame,
+                        corners,
+                        ids
+                    )
+
+            # =====================================================
+            # Detected marker IDs
+            # =====================================================
+
+            if ids is not None:
+                self.get_logger().info(
+                    f"ArUco detected: {ids.flatten().tolist()}",
+                    throttle_duration_sec=1.0
+                )
+
+
 
             # Show camera image
             cv2.imshow("Vision Manager - Camera", frame)
