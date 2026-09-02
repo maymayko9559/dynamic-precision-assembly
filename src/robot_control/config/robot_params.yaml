@@ -1,0 +1,21 @@
+# ============================================================
+# robot_params.yaml
+# ============================================================
+# [EN]
+# Stores configuration parameters for robot control.
+#
+# Examples:
+# - Velocity / Acceleration
+# - Home position
+# - Approach height
+# - Insertion depth
+#
+# [KR]
+# Robot Control에서 사용하는 설정값을 저장하는 파일.
+#
+# 예:
+# - Velocity / Acceleration
+# - Home Position
+# - Approach Height
+# - Insertion Depth
+# ============================================================

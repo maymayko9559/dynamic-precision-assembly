@@ -1,0 +1,19 @@
+# ============================================================
+# vision_params.yaml
+# ============================================================
+# [EN]
+# Stores configuration parameters for the Vision System.
+#
+# Examples:
+# - Threshold values
+# - Minimum contour size
+# - Image processing parameters
+#
+# [KR]
+# Vision System에서 사용하는 설정값을 저장하는 파일.
+#
+# 예:
+# - Threshold 값
+# - 최소 Contour 크기
+# - 이미지 처리 관련 Parameter
+# ============================================================
