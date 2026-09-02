@@ -26,25 +26,22 @@
 
 import rclpy
 from rclpy.node import Node
-import cv2
-import numpy as np
 
 
+class vision_manager(Node):
 
-class DetectionNode(Node):
-
-    def __init__(self):
-        super().__init__('detection_node')
+    def __init__():
+        super().__init__('vision_manager')
 
 
 def main(args=None):
     
     rclpy.init(args=args)
 
-    node = DetectionNode()
+    node = vision_manager()
 
     rclpy.spin(node)
-    
+
     node.destroy_node()
     rclpy.shutdown()
 
