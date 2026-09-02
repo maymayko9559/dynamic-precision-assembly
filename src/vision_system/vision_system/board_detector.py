@@ -2,23 +2,22 @@
 # board_detector.py
 # ============================================================
 # [EN]
-# Detects the moving target board using an ArUco marker.
+# Detects the target board using ArUco markers.
 #
 # Main Responsibilities:
-# - Detect the ArUco marker attached to the target board
-# - Estimate the position and orientation of the board
-# - Provide the board region for target detection
-# - Provide board position information for tracking
+# - Detect ArUco markers
+# - Determine the target board position
+# - Calculate the target board region
+# - Extract the Board ROI
 #
 # [KR]
-# ArUco Marker를 이용하여 움직이는 Target Board를
-# 검출하는 파일.
+# ArUco Marker를 이용하여 Target Board를 검출하는 파일.
 #
 # 주요 역할:
-# - Target Board에 부착된 ArUco Marker 검출
-# - Board의 위치 및 방향 계산
-# - Target 검출을 위한 Board 영역 제공
-# - Tracking을 위한 Board 위치 정보 제공
+# - ArUco Marker 검출
+# - Target Board 위치 계산
+# - Target Board 영역 계산
+# - Board ROI 추출
 
 
 # LV1
@@ -43,3 +42,64 @@
 # → 미래 Target 위치 예측
 
 # ============================================================
+
+class BoardDetector:
+
+    def __init__(self):
+        pass
+
+    # ========================================================
+    # Detect Board
+    # ========================================================
+
+    def detect(self, frame):
+        """
+        Detect the target board using ArUco markers.
+
+        Returns:
+            Board information or None.
+        """
+
+        # TODO: Implement ArUco detection
+
+        return None
+
+    # ========================================================
+    # Extract Board ROI
+    # ========================================================
+
+    def extract_board_roi(self, frame, board_info):
+        """
+        Extract the target board region from the image.
+        """
+
+        # TODO: Implement Board ROI extraction
+
+        return None
+
+    # ========================================================
+    # Board Pixel -> Image Pixel
+    # ========================================================
+
+    def board_to_image_pixel(self, point, board_info):
+        """
+        Convert Board ROI pixel coordinates
+        to full camera image pixel coordinates.
+        """
+
+        # TODO: Implement later
+
+        return point
+
+    # ========================================================
+    # Debug
+    # ========================================================
+
+    def draw_board(self, frame, board_info):
+        """
+        Draw detected board information.
+        """
+
+        # TODO: Implement later
+
+        return frame
