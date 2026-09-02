@@ -41,4 +41,10 @@ def generate_launch_description():
             name='target_manager',
             output='screen'
         ),
+        Node(
+            package='robot_control',
+            executable='motion_utils',
+            name='motion_utils',
+            output='screen',
+        ),
     ])

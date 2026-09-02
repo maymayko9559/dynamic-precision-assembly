@@ -26,6 +26,9 @@
 
 import rclpy
 from rclpy.node import Node
+import cv2
+import numpy as np
+
 
 
 class DetectionNode(Node):
@@ -41,7 +44,7 @@ def main(args=None):
     node = DetectionNode()
 
     rclpy.spin(node)
-
+    
     node.destroy_node()
     rclpy.shutdown()
 
