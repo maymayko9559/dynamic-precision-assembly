@@ -23,26 +23,35 @@
 # - 도형 검출에 적합한 이미지 생성
 # ============================================================
 
-import rclpy
-from rclpy.node import Node
-
-class ImageProcessing(Node):
-
-    def __init__(self,node):
-        super().__init__('image_processing')
-        self.node=node
-
-def main(args=Node):
-    rclpy.init(args=args)
-    node = ImageProcessing()
-    rclpy.spin(node)
 
 
+# ============================================================
+# Image Preprocessing
+# ============================================================
+
+def preprocess_image(image):
+    """
+    Preprocess image before detection.
+    """
+
+    # TODO:
+    # Grayscale
+    # Blur
+    # Threshold
+    # Morphology
+
+    return image
 
 
-    node.destroy_node()
-    rclpy.shutdown()
+# ============================================================
+# Find Contours
+# ============================================================
 
-if __name__=='__main__':
-    main()
+def find_contours(image):
+    """
+    Find contours from the processed image.
+    """
 
+    # TODO: Implement later
+
+    return []
