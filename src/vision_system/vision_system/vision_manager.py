@@ -60,10 +60,18 @@ class VisionManager(Node):
         # =====================================================
         # Camera Subscriber
         # =====================================================
+        self.declare_parameter(
+            "image_topic",
+            "/image_raw"
+        )
+
+        image_topic = self.get_parameter(
+            "image_topic"
+        ).value
 
         self.image_sub = self.create_subscription(
             Image,
-            "/camera/color/image_raw",
+            image_topic,
             self.image_callback,
             10
         )
@@ -90,7 +98,10 @@ class VisionManager(Node):
 
         # TODO: Implement later
 
-        pass
+        self.get_logger().info(
+            "Camera frame received.",
+            throttle_duration_sec=1.0 
+        )
 
 
 # ============================================================
