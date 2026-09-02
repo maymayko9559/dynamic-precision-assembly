@@ -19,3 +19,23 @@
 # - Pixel 좌표를 Camera 좌표로 변환
 # - Camera 좌표를 Robot BASE 좌표로 변환
 # ============================================================
+import rclpy
+from rclpy.node import Node
+
+class CoordinateTransform(Node):
+
+    def __init__(self,node):
+        super().__init__('coordinate_transform')
+        self.node=node
+
+def main(args=None):
+    rclpy.init(args=args)
+    node=CoordinateTransform()
+    rclpy.spin(node)
+
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__=='__main__':
+    main()
