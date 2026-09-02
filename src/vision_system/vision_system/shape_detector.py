@@ -2,18 +2,32 @@
 # shape_detector.py
 # ============================================================
 # [EN]
-# Detects shapes from the processed image using OpenCV.
-#
-# Main Responsibilities:
-# - Detect contours
-# - Identify shapes such as circles, rectangles, and triangles
-# - Calculate the center pixel coordinates of detected shapes
+# Given a list of contours (from image_processing.get_contours),
+# find the target shape, compute its center point, classify its
+# type, and estimate a detection confidence.
 #
 # [KR]
-# OpenCV를 이용하여 이미지에서 도형을 검출하는 파일.
-#
-# 주요 역할:
-# - Contour 검출
-# - 원, 사각형, 삼각형 등의 도형 판별
-# - 검출된 도형의 중심 Pixel 좌표 계산
+# image_processing.get_contours() 로 얻은 Contour 목록에서
+# 목표 도형을 찾아 중심점을 계산하고, 도형 종류를 분류하며,
+# 검출 신뢰도를 추정한다.
 # ============================================================
+
+import rclpy
+from rclpy.node import Node
+class ShapeDetector(Node):
+
+    def __init__(self,node):
+        super().__init__('shape_detector')
+        self.node=node
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ShapeDetector()
+    rclpy.spin(node)
+
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__=='__main__':
+    main()

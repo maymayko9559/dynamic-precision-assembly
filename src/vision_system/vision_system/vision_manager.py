@@ -31,17 +31,17 @@ import numpy as np
 
 
 
-class DetectionNode(Node):
+class VisionManager(Node):
 
     def __init__(self):
-        super().__init__('detection_node')
+        super().__init__('VisionManager')
 
 
 def main(args=None):
     
     rclpy.init(args=args)
 
-    node = DetectionNode()
+    node = VisionManager()
 
     rclpy.spin(node)
     

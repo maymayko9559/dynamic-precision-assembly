@@ -22,3 +22,27 @@
 # - Threshold / Edge 처리
 # - 도형 검출에 적합한 이미지 생성
 # ============================================================
+
+import rclpy
+from rclpy.node import Node
+
+class ImageProcessing(Node):
+
+    def __init__(self,node):
+        super().__init__('image_processing')
+        self.node=node
+
+def main(args=Node):
+    rclpy.init(args=args)
+    node = ImageProcessing()
+    rclpy.spin(node)
+
+
+
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__=='__main__':
+    main()
+
