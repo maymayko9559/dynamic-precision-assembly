@@ -12,22 +12,39 @@
 # 검출 신뢰도를 추정한다.
 # ============================================================
 
-import rclpy
-from rclpy.node import Node
-class ShapeDetector(Node):
 
-    def __init__(self,node):
-        super().__init__('shape_detector')
-        self.node=node
+# ============================================================
+# Shape Classification
+# ============================================================
 
-def main(args=None):
-    rclpy.init(args=args)
-    node = ShapeDetector()
-    rclpy.spin(node)
+def classify_shape(contour):
+    """
+    Classify contour shape.
+
+    Expected shapes:
+        circle
+        triangle
+        square
+        unknown
+    """
+
+    # TODO: Implement later
+
+    return "unknown"
 
 
-    node.destroy_node()
-    rclpy.shutdown()
+# ============================================================
+# Calculate Center
+# ============================================================
 
-if __name__=='__main__':
-    main()
+def calculate_center(contour):
+    """
+    Calculate the center pixel position of a contour.
+
+    Returns:
+        (x, y)
+    """
+
+    # TODO: Implement later
+
+    return (0, 0)
