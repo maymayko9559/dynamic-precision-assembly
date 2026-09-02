@@ -27,7 +27,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'vision_manager = vision_system.vision_manager:main',
+            'VisionManager = vision_system.VisionManager:main',
             'coordinate_transform = vision_system.coordinate_transform:main',
             'image_processing = vision_system.image_processing:main',
             'shape_detector = vision_system.shape_detector:main',
