@@ -30,6 +30,7 @@ setup(
             'assembly_controller = robot_control.assembly_controller:main',
             'insertion_controller = robot_control.insertion_controller:main',
             'motion_planner = robot_control.motion_planner:main',
+            'robot_init = robot_control.robot_init:main',
             'target_manager = robot_control.target_manager:main',
         ],
     },
