@@ -19,23 +19,50 @@
 # - Pixel 좌표를 Camera 좌표로 변환
 # - Camera 좌표를 Robot BASE 좌표로 변환
 # ============================================================
-import rclpy
-from rclpy.node import Node
-
-class CoordinateTransform(Node):
-
-    def __init__(self,node):
-        super().__init__('coordinate_transform')
-        self.node=node
-
-def main(args=None):
-    rclpy.init(args=args)
-    node=CoordinateTransform()
-    rclpy.spin(node)
 
 
-    node.destroy_node()
-    rclpy.shutdown()
+class CoordinateTransform:
 
-if __name__=='__main__':
-    main()
+    def __init__(self):
+        pass
+
+    # ========================================================
+    # Pixel -> Camera
+    # ========================================================
+
+    def pixel_to_camera(self, pixel, depth=None):
+        """
+        Convert pixel coordinates to camera coordinates.
+        """
+
+        # TODO:
+        # RealSense Intrinsic + Depth
+
+        return None
+
+    # ========================================================
+    # Camera -> Robot
+    # ========================================================
+
+    def camera_to_robot(self, camera_position):
+        """
+        Convert camera coordinates to Robot BASE coordinates.
+        """
+
+        # TODO:
+        # Camera-Robot calibration
+
+        return None
+
+    # ========================================================
+    # Pixel -> Robot
+    # ========================================================
+
+    def pixel_to_robot(self, pixel, depth=None):
+        """
+        Convert pixel coordinates directly to Robot BASE.
+        """
+
+        # TODO: Implement later
+
+        return None
