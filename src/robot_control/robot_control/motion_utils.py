@@ -68,9 +68,9 @@ class MotionUtils:
 
     
     def run(self):
-        # 예시 목표 좌표 ([200.0, 0.0, 150.0] 정도로 안전한 높이 테스트를 권장합니다!)
+        
         self.pick_and_place_scenario([0,0,90,0,90,0])
-        self.test_move_linear_ABS([367.37,6.30,215.33,100.08,179.98,100.9])
+        self.test_move_linear_ABS([367.37,6.30,215.33,100.08,179.98,100.9]) # 절대좌표 홈위치 == posj([0,0,90,0,90,0])
         self.test_move_linear_REL([0,-100,0,0,0,0])
 
 # 임시로 이 파일 단독 실행을 테스트하기 위한 메인 함수
