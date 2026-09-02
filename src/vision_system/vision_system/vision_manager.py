@@ -25,29 +25,94 @@
 
 
 import rclpy
-from rclpy.node import Node
-import cv2
-import numpy as np
 
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+
+from .board_detector import BoardDetector
+from .object_detector import ObjectDetector
+from .target_detector import TargetDetector
+from .coordinate_transform import CoordinateTransform
 
 
 class VisionManager(Node):
 
     def __init__(self):
-        super().__init__('VisionManager')
 
+        super().__init__("vision_manager")
+
+        # =====================================================
+        # CvBridge
+        # =====================================================
+
+        self.bridge = CvBridge()
+
+        # =====================================================
+        # Vision Modules
+        # =====================================================
+
+        self.board_detector = BoardDetector()
+        self.object_detector = ObjectDetector()
+        self.target_detector = TargetDetector()
+        self.coordinate_transform = CoordinateTransform()
+
+        # =====================================================
+        # Camera Subscriber
+        # =====================================================
+
+        self.image_sub = self.create_subscription(
+            Image,
+            "/camera/color/image_raw",
+            self.image_callback,
+            10
+        )
+
+        self.get_logger().info(
+            "Vision Manager started."
+        )
+
+    # =========================================================
+    # Camera Callback
+    # =========================================================
+
+    def image_callback(self, msg):
+        """
+        Main vision processing flow.
+
+        Camera
+            -> Board Detection
+            -> ROI Separation
+            -> Object / Target Detection
+            -> Coordinate Transform
+            -> Publish
+        """
+
+        # TODO: Implement later
+
+        pass
+
+
+# ============================================================
+# Main
+# ============================================================
 
 def main(args=None):
-    
+
     rclpy.init(args=args)
 
     node = VisionManager()
 
-    rclpy.spin(node)
-    
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+
+    except KeyboardInterrupt:
+        pass
+
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
