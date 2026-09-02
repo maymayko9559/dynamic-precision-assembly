@@ -32,6 +32,7 @@ setup(
             'motion_planner = robot_control.motion_planner:main',
             'robot_init = robot_control.robot_init:main',
             'target_manager = robot_control.target_manager:main',
+            'motion_utils = robot_control.motion_utils:main',
         ],
     },
 )
