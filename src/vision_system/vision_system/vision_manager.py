@@ -140,13 +140,55 @@ class VisionManager(Node):
                         ids
                     )
 
-            # =====================================================
-            # Detected marker IDs
-            # =====================================================
+            # ====================================================
+            # Get Board Corners
+            # ====================================================
 
-            if ids is not None:
+            board_corners = (
+                self.board_detector.get_board_corners(
+                    corners,
+                    ids
+                )
+            )
+
+            # ====================================================
+            # Extract Board ROI
+            # ====================================================
+            
+            if board_corners is not None:
+                frame = (
+                    self.board_detector.draw_board_boundary(
+                    frame,
+                    board_corners
+                    )
+                )
+
+                # Perspective transform to get the Board ROI
+                board_roi = (
+                    self.board_detector.extract_board_roi(
+                        frame,
+                        board_corners  
+                    )
+                )
+
+                # =================================================
+                # Show Board ROI
+                # =================================================
+
+                cv2.imshow(
+                    "Target Board ROI",
+                    board_roi
+                )
+
                 self.get_logger().info(
-                    f"ArUco detected: {ids.flatten().tolist()}",
+                    "Target Board detected.",
+                    throttle_duration_sec=1.0
+                )           
+
+            else:
+
+                self.get_logger().info(
+                    "Waiting for ArUco IDs 0, 1, 2, 3...",
                     throttle_duration_sec=1.0
                 )
 
