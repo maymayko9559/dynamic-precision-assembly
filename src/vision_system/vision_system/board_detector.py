@@ -42,11 +42,25 @@
 # → 미래 Target 위치 예측
 
 # ============================================================
-
+import cv2
 class BoardDetector:
 
     def __init__(self):
-        pass
+
+
+        # =====================================================
+        # ArUco Dictionary
+        # =====================================================
+        self.aruco_dict = cv2.aruco.getPredefinedDictionary(
+            cv2.aruco.DICT_4X4_250
+        )
+
+        # =====================================================
+        # Detector Parameters
+        # =====================================================
+
+        self.parameters = cv2.aruco.DetectorParameters_create()
+
 
     # ========================================================
     # Detect Board
@@ -60,10 +74,15 @@ class BoardDetector:
             Board information or None.
         """
 
-        # TODO: Implement ArUco detection
+        corners, ids, rejected = cv2.aruco.detectMarkers(
+            frame,
+            self.aruco_dict,
+            parameters=self.parameters
+        )
 
-        return None
+        return corners, ids
 
+    
     # ========================================================
     # Extract Board ROI
     # ========================================================
@@ -95,11 +114,12 @@ class BoardDetector:
     # Debug
     # ========================================================
 
-    def draw_board(self, frame, board_info):
+    def draw_board(self, frame, corners, ids):
         """
-        Draw detected board information.
+        Draw the detected ArUco markers on the image.
         """
 
-        # TODO: Implement later
+        if ids is not None:
+            cv2.aruco.drawDetectedMarkers(frame, corners, ids)
 
         return frame
