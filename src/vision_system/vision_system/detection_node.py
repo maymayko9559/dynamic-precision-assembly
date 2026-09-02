@@ -22,3 +22,29 @@
 # - 이미지 전처리 및 도형 검출 함수 호출
 # - 검출된 도형 정보를 ROS2 Topic으로 Publish
 # ============================================================
+
+
+import rclpy
+from rclpy.node import Node
+
+
+class DetectionNode(Node):
+
+    def __init__(self):
+        super().__init__('detection_node')
+
+
+def main(args=None):
+    
+    rclpy.init(args=args)
+
+    node = DetectionNode()
+
+    rclpy.spin(node)
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
