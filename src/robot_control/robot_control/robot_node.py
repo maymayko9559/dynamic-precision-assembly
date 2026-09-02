@@ -21,3 +21,23 @@
 # - Doosan Robot API 초기화
 # - Robot Control에 필요한 기능 준비
 # ============================================================
+
+import rclpy
+from rclpy.node import Node
+
+class RobotNode(Node):
+
+    def __init__(self,node):
+        super().__init__('robot_node')
+        self.node=node
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = RobotNode()
+    rclpy.spin(node)
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
