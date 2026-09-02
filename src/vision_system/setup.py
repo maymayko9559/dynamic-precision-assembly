@@ -28,8 +28,6 @@ setup(
     entry_points={
         'console_scripts': [
             'vision_manager = vision_system.vision_manager:main',
-            'coordinate_transform = vision_system.coordinate_transform:main',
-            'shape_detector = vision_system.shape_detector:main',
         ],
     },
 )
