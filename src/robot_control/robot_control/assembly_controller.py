@@ -24,3 +24,26 @@
 # - 도형 삽입
 # - 작업 완료 처리
 # ============================================================
+
+import rclpy
+from rclpy.node import Node
+
+class AssemblyController(Node):
+
+    def __init__(self,node):
+        super().__init__('assembly_controller')
+        self.node = node
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    node = AssemblyController()
+
+    rclpy.spin(node)
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == "__main__":
+
+    main()

@@ -20,3 +20,22 @@
 # - Target 위치 및 Offset 계산
 # - 중복되는 Robot Motion 코드 관리
 # ============================================================
+import rclpy
+from rclpy.node import Node
+
+class MotionUtils(Node):
+
+    def __init__(self,node):
+        super().__init__('motion_utils')
+        self.node=node
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = MotionUtils()
+    rclpy.spin(node)
+
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
