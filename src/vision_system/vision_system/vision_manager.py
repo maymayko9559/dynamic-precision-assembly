@@ -31,17 +31,17 @@ import numpy as np
 
 
 
-class vision_manager(Node):
+class VisionManager(Node):
 
     def __init__(self):
-        super().__init__('vision_manager')
+        super().__init__('VisionManager')
 
 
 def main(args=None):
     
     rclpy.init(args=args)
 
-    node = vision_manager()
+    node = VisionManager()
 
     rclpy.spin(node)
     
