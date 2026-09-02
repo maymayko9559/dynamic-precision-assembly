@@ -1,3 +1,10 @@
+# ============================================================
+# vision.launch.py
+# ============================================================
+# Vision System 관련 ROS2 Node를
+# 한 번에 실행하기 위한 Launch 파일.
+# ============================================================
+
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
