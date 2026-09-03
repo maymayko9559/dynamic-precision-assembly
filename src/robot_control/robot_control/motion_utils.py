@@ -36,38 +36,7 @@ class MotionUtils:
     def __init__(self, robot_init_instance: RobotInit):
         super().__init__()
         self.ri = robot_init_instance
-    def place_object(self, target_pose):
-        """
-        임의의 목표 좌표(place_pose)를 받아 접근 후 물체를 내려놓는 시나리오
-        """
-        self.target_pose = target_pose
-        self.ri.node.get_logger().info("Starting Place Motion Sequence...")
-
-        # 1. 작업 준비 위치(Home 또는 Ready Pose)로 관절 이동 (예시 관절 각도)
-        self.ri.move_joint([0, 0, 50, 0, 90, 0], vel=30, acc=30)
-
-        up_target_pose = [
-            self.target_pose[0],
-            self.target_pose[1],
-            self.target_pose[2]+200, # z축을 200mm 위로
-            self.target_pose[3],
-            self.target_pose[4],
-            self.target_pose[5]
-        ]
-
-        # 2. 목표 위치의 위로 이동
-        self.ri.move_linear_ABS(up_target_pose, vel=30, acc=30)
-
-        # 3. 목표위치에 집어넣기
-        self.ri.move_linear_REL([0, 0, -300, 0, 0, 0], vel=20, acc=20)
-
-        # 3. 그리퍼 열기 (물체 놓기)
-        self.ri.open_gripper()
-
-        # 4. 작업 완료 후 Home 위치로 복귀
-        self.ri.move_joint([0, 0, 50, 0, 90, 0], vel=30, acc=30)
-
-        self.ri.node.get_logger().info("Place Motion Sequence Finished Successfully!")
+    
 
     def pick_up(self, object_pose):
         from DSR_ROBOT2 import movej, posj,wait
@@ -94,11 +63,17 @@ class MotionUtils:
             self.object_pose[4],
             self.object_pose[5]
         ]
-        self.ri.move_linear_ABS(self.object_pose, vel=30, acc=30)
+        self.ri.node.get_logger().info('물체 위 위치로 이동중...')
+        self.ri.move_linear_ABS(up_object, vel=30, acc=30)
+        self.ri.node.get_logger().info('물체 위 위치로 이동완료!')
         wait(1.0)
-        self.ri.move_linear_REL([0.0,0.0,-100,0.0,0.0,0.0],vel=30, acc=30)
+        self.ri.node.get_logger().info('물체 잡으러 하강중...')
+        self.ri.move_linear_REL([0.0,0.0,-150,0.0,0.0,0.0],vel=30, acc=30)
+        self.ri.node.get_logger().info('물체 위치로 하강 완료!')
         self.ri.close_gripper()
+        self.ri.node.get_logger().info('물체 잡기 완료!!')
         self.ri.move_linear_REL([0.0,0.0,200,0.0,0.0,0.0],vel=30, acc=30)
+        self.ri.node.get_logger().info('물체 들고 안전하게 위로 올리기!')
 
     
 
@@ -115,7 +90,7 @@ class MotionUtils:
         up_target_pose = [
             self.target_pose[0],
             self.target_pose[1],
-            self.target_pose[2]+50, # z축을 50mm 위로
+            self.target_pose[2]+30, # z축을 30mm 위로
             self.target_pose[3],
             self.target_pose[4],
             self.target_pose[5]
@@ -187,8 +162,8 @@ class MotionUtils:
 
     
     def run(self):
-        object = [367.37, 6.30, 215.33, 100.08, 179.98, 100.9]
-        target = [32,-451.23,132.96,109.07,-177.17,-161.06]
+        object = [367.37, 6.30, 215.33, 100.08, 179.98, 100.9]#임시 좌표
+        target = [32,-451.23,132.96,109.07,-177.17,-161.06]# 임시 좌표
         self.pick_up(object)
         self.place_object(target)
         # self.async_pick_and_place_run(target, offset)
@@ -226,7 +201,7 @@ def main(args=None):
     motion.run()
     
     try:
-        rclpy.spin(node)
+        rclpy.spin_once(node)
     except KeyboardInterrupt:
         pass
     
