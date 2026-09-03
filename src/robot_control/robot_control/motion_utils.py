@@ -36,13 +36,72 @@ class MotionUtils:
     def __init__(self, robot_init_instance: RobotInit):
         super().__init__()
         self.ri = robot_init_instance
-        
+    def place_object(self, target_pose):
+        """
+        임의의 목표 좌표(place_pose)를 받아 접근 후 물체를 내려놓는 시나리오
+        """
+        self.target_pose = target_pose
+        self.ri.node.get_logger().info("Starting Place Motion Sequence...")
 
-        # 1. 최신 비전 좌표를 저장할 변수
-        
+        # 1. 작업 준비 위치(Home 또는 Ready Pose)로 관절 이동 (예시 관절 각도)
+        self.ri.move_joint([0, 0, 50, 0, 90, 0], vel=30, acc=30)
+
+        up_target_pose = [
+            self.target_pose[0],
+            self.target_pose[1],
+            self.target_pose[2]+200, # z축을 200mm 위로
+            self.target_pose[3],
+            self.target_pose[4],
+            self.target_pose[5]
+        ]
+
+        # 2. 목표 위치의 위로 이동
+        self.ri.move_linear_ABS(up_target_pose, vel=30, acc=30)
+
+        # 3. 목표위치에 집어넣기
+        self.ri.move_linear_REL([0, 0, -300, 0, 0, 0], vel=20, acc=20)
+
+        # 3. 그리퍼 열기 (물체 놓기)
+        self.ri.open_gripper()
+
+        # 4. 작업 완료 후 Home 위치로 복귀
+        self.ri.move_joint([0, 0, 50, 0, 90, 0], vel=30, acc=30)
+
+        self.ri.node.get_logger().info("Place Motion Sequence Finished Successfully!")
 
     def pick_up(self, object_pose):
         from DSR_ROBOT2 import movej, posj,wait
+        """
+        임의의 목표 좌표(target_pose)를 받아 접근 후 물체를 집어 올리는 시나리오
+        """
+        self.object_pose = object_pose
+        self.ri.node.get_logger().info("Starting Pick and Place Motion Sequence...")
+
+        # 1. 시작 전 그리퍼 확실히 열어두기
+        self.ri.close_gripper()
+        self.ri.open_gripper()
+
+        # 2. 작업 준비 위치(Home 또는 Ready Pose)로 관절 이동 (예시 관절 각도)
+        self.ri.node.get_logger().info("가기 전")
+        self.ri.move_joint([0,0,90,0,90,0],vel=30, acc=30)
+        # self.ri.move_joint([0,0,50,0,90,0], vel=30, acc=30)
+        self.ri.node.get_logger().info("갔다")
+        up_object=[
+            self.object_pose[0],
+            self.object_pose[1],
+            self.object_pose[2]+200,
+            self.object_pose[3],
+            self.object_pose[4],
+            self.object_pose[5]
+        ]
+        self.ri.move_linear_ABS(self.object_pose, vel=30, acc=30)
+        wait(1.0)
+        self.ri.move_linear_REL([0.0,0.0,-100,0.0,0.0,0.0],vel=30, acc=30)
+        self.ri.close_gripper()
+        self.ri.move_linear_REL([0.0,0.0,200,0.0,0.0,0.0],vel=30, acc=30)
+
+    def pick_and_place_scenario(self, target_pose):
+        from DSR_ROBOT2 import movej, posj
         """
         임의의 목표 좌표(target_pose)를 받아 접근 후 물체를 집어 올리는 시나리오
         """

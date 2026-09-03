@@ -50,5 +50,11 @@ class RobotInit:
         self.node.get_logger().info(f"상대좌표 이동: {self.pos_offset}")
         movel(self.pos_offset, vel =vel,acc=acc,mod=DR_MV_MOD_REL)
 
+    # compliance 시작
+    def start_compliance(self):
+        from DSR_ROBOT2 import(
+            wait, task_compliance_ctrl,
+            set_stiffnessx
+        )
         
         
