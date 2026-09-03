@@ -262,6 +262,8 @@ class VisionManager(Node):
         msg.y = float(y)
         msg.z = float(z)
 
+        msg.angle = detection["angle"]
+
         self.detection_pub.publish(msg)
 
 
