@@ -124,7 +124,7 @@ class MotionUtils:
         self.ri.node.get_logger().info("로봇 이동 중... 그리퍼 타이밍 대기")
         
         # 이동 시작 후 원하는 타이밍(예: 1.5초 뒤 도착 시점)에 그리퍼 작동
-        time.sleep(1.5) 
+        time.sleep(1.0) 
         
         self.ri.node.get_logger().info("이동 도중 그리퍼 CLOSE 작동!")
         self.ri.close_gripper()
