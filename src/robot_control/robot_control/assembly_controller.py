@@ -67,19 +67,21 @@ class AssemblyController(Node):
         self.get_logger().info(f'Detected Object - X: {self.latest_x}, Y: {self.latest_y}, Z: {self.latest_z}')
 
     def test_run(self,is_object_detected,x,y,z,type,shape):
-        if is_object_detected:
-            self.get_logger().info(f'Detected Object - X: {self.latest_x}, Y: {self.latest_y}, Z: {self.latest_z}')
-            self.mu.pick_up([x,y,z,100.08, 179.98, 100.9])
-        else:
-            self.get_logger().info('오브젝트를 감지하지 못했다...')
+        self.mu.pick_up([x,y,z,100.08, 179.98, 100.9])
+
+        # if is_object_detected:
+        #     self.get_logger().info(f'Detected Object - X: {self.latest_x}, Y: {self.latest_y}, Z: {self.latest_z}')
+        #     self.mu.pick_up([x,y,z,100.08, 179.98, 100.9])
+        # else:
+        #     self.get_logger().info('오브젝트를 감지하지 못했다...')
 
 
 def main(args=None):
     rclpy.init(args=args)
 
     node = AssemblyController()
-    node.test_run(node.is_object_detected,node.latest_x,node.latest_y,node.latest_z,node.type,node.shape)
-
+    # node.test_run(node.is_object_detected,node.latest_x,node.latest_y,node.latest_z,node.type,node.shape)
+    node.test_run(True, 367, 6, 215)
     rclpy.spin(node)
 
     node.destroy_node()
