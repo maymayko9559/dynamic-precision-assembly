@@ -4,7 +4,7 @@
 # [EN]
 # Custom ROS2 message used to send detected object information
 # from the Vision System to other nodes.
-# type: The type of the detected object (e.g., "circle", "square").
+# type: "object" or "target"
 # shape: The shape of the detected object (e.g., "triangle", "rectangle").
 #
 # [KR]
