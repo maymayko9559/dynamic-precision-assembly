@@ -28,6 +28,10 @@ Terminal 1:
 ros2 run usb_cam usb_cam_node_exe --ros-args \
   -p video_device:=/dev/video4
 
+RealSense:
+ros2 launch realsense2_camera rs_launch.py \
+  enable_color:=true \
+  enable_depth:=true
   
 Terminal 2:
 cd ~/dynamic_assembly_ws
@@ -43,9 +47,9 @@ Terminal 3:
 v4l2-ctl -d /dev/video4 --set-ctrl=brightness=128
   
 RealSense: 
-ros2 run vision_system vision_manager \
-  --ros-args -p image_topic:=/camera/color/image_raw
-
+ros2 run vision_system vision_manager --ros-args \
+  -p color_topic:=/camera/camera/color/image_raw \
+  -p depth_topic:=/camera/camera/depth/image_rect_raw
 '''
 import rclpy
 import cv2
@@ -87,20 +91,56 @@ class VisionManager(Node):
         self.coordinate_transform = CoordinateTransform()
 
         # =====================================================
-        # Camera Subscriber
+        # Camera Subscriber - for WebCam
         # =====================================================
 
-        self.declare_parameter("image_topic", "/image_raw")
+        # self.declare_parameter("image_topic", "/image_raw")
 
-        image_topic = self.get_parameter("image_topic").value
+        # image_topic = self.get_parameter("image_topic").value
 
-        self.image_sub = self.create_subscription(
+        # self.image_sub = self.create_subscription(
+        #     Image,
+        #     image_topic,
+        #     self.color_callback,
+        #     10
+        # )
+
+        # ============================================================
+        # Camera Topics
+        # ============================================================
+
+        self.declare_parameter("color_topic", "/camera/camera/color/image_raw")
+
+        self.declare_parameter("depth_topic", "/camera/camera/depth/image_rect_raw")
+        color_topic = self.get_parameter("color_topic").value
+
+        depth_topic = self.get_parameter("depth_topic").value
+
+
+
+        # ============================================================
+        # Color Image Subscriber
+        # ============================================================
+
+        self.color_sub = self.create_subscription(
             Image,
-            image_topic,
-            self.image_callback,
+            color_topic,
+            self.color_callback,
             10
         )
 
+        # ============================================================
+        # Depth Image Subscriber
+        # ============================================================
+
+        self.depth_sub = self.create_subscription(
+            Image,
+            depth_topic,
+            self.depth_callback,
+            10
+        )
+
+        self.latest_depth_frame = None
 
         # ====================================================
         # Detected Object Publisher
@@ -115,6 +155,23 @@ class VisionManager(Node):
         
         self.get_logger().info("Vision Manager started.")
 
+
+    def depth_callback(self, msg):
+
+        try:
+
+            self.latest_depth_frame = (
+                self.bridge.imgmsg_to_cv2(
+                    msg,
+                    desired_encoding="passthrough"
+                )
+            )
+
+        except Exception as e:
+
+            self.get_logger().error(
+                f"Failed to convert depth image: {e}"
+            )
 
     def publish_detection(self, detection, position):
         """
@@ -165,7 +222,7 @@ class VisionManager(Node):
         for target in targets:
             self.draw_detection(board_roi, target)
 
-        return board_roi
+        return board_roi, targets
 
     def process_objects(self, raw_frame, board_corners):
 
@@ -188,7 +245,7 @@ class VisionManager(Node):
         for obj in objects:
             self.draw_detection(pick_roi, obj)
 
-        return pick_roi
+        return pick_roi, objects
 
 
     def create_pick_roi(self, raw_frame, board_corners):
@@ -252,7 +309,7 @@ class VisionManager(Node):
     # =========================================================
     # Camera Callback
     # =========================================================
-    def image_callback(self, msg):
+    def color_callback(self, msg):
 
         try:
 
@@ -264,6 +321,19 @@ class VisionManager(Node):
             raw_frame = frame.copy()
             debug_frame = frame.copy()
 
+            # =====================================================
+            # Wait for Depth Image
+            # =====================================================
+
+            if self.latest_depth_frame is None:
+
+                self.get_logger().info(
+                    "Waiting for depth image...",
+                    throttle_duration_sec=1.0
+                )
+
+                return
+            
             # =====================================================
             # Board Detection
             # =====================================================
@@ -295,16 +365,40 @@ class VisionManager(Node):
                 )
 
                 # Target detection
-                board_roi = self.process_targets(
-                    raw_frame,
-                    board_corners
-                )
+                board_roi, targets = self.process_targets(raw_frame, board_corners)
 
+
+                # =====================================================
+                # TEST: Board ROI Pixel -> Camera Pixel
+                # =====================================================
+
+                for target in targets:
+
+                    board_center = target["center"]
+
+                    camera_center = (
+                        self.board_detector.board_to_camera_pixel(
+                            board_center,
+                            board_corners
+                        )
+                    )
+
+                    self.get_logger().info(
+                        f'{target["shape"]}: '
+                        f'board={board_center}, '
+                        f'camera={camera_center}'
+                    )
+
+                    # Draw converted position on original camera image
+                    cv2.circle(
+                        debug_frame,
+                        camera_center,
+                        8,
+                        (0, 0, 255),
+                        -1
+                    )
                 # Object detection
-                pick_roi = self.process_objects(
-                    raw_frame,
-                    board_corners
-                )
+                pick_roi, objects = self.process_objects(raw_frame, board_corners)
 
                 cv2.imshow(
                     "Target Board ROI",
