@@ -163,7 +163,47 @@ class BoardDetector:
 
         return board_roi
 
+    def board_to_camera_pixel(
+        self,
+        board_point,
+        board_corners
+    ):
 
+        destination = np.array(
+            [
+                [0, 0],
+                [self.board_width - 1, 0],
+                [
+                    self.board_width - 1,
+                    self.board_height - 1
+                ],
+                [
+                    0,
+                    self.board_height - 1
+                ]
+            ],
+            dtype=np.float32
+        )
+
+        inverse_matrix = cv2.getPerspectiveTransform(
+            destination,
+            board_corners
+        )
+
+        point = np.array(
+            [[[board_point[0], board_point[1]]]],
+            dtype=np.float32
+        )
+
+        camera_point = cv2.perspectiveTransform(
+            point,
+            inverse_matrix
+        )
+
+        u = int(camera_point[0][0][0])
+        v = int(camera_point[0][0][1])
+
+        return (u, v)
     # ========================================================
     # Get Board Corners
     # ========================================================
