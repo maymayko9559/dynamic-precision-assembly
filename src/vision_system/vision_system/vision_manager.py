@@ -42,14 +42,20 @@ source install/setup.bash
 ros2 run vision_system vision_manager \
   --ros-args -p image_topic:=/image_raw
 
-When video is too dark,
-Terminal 3:
-v4l2-ctl -d /dev/video4 --set-ctrl=brightness=128
-  
 RealSense: 
 ros2 run vision_system vision_manager --ros-args \
   -p color_topic:=/camera/camera/color/image_raw \
   -p depth_topic:=/camera/camera/depth/image_rect_raw
+
+
+Terminal 3:
+Webcam: when video is too dark,
+v4l2-ctl -d /dev/video4 --set-ctrl=brightness=128
+
+Realsense: 
+ros2 param set /camera/camera align_depth.enable true
+
+
 '''
 import rclpy
 import cv2
@@ -111,7 +117,8 @@ class VisionManager(Node):
 
         self.declare_parameter("color_topic", "/camera/camera/color/image_raw")
 
-        self.declare_parameter("depth_topic", "/camera/camera/depth/image_rect_raw")
+        self.declare_parameter("depth_topic", "/camera/camera/aligned_depth_to_color/image_raw")
+
         color_topic = self.get_parameter("color_topic").value
 
         depth_topic = self.get_parameter("depth_topic").value
@@ -381,6 +388,16 @@ class VisionManager(Node):
                             board_center,
                             board_corners
                         )
+                    )
+
+                    u, v = camera_center
+
+                    depth = self.latest_depth_frame[v, u]
+
+                    self.get_logger().info(
+                        f'{target["shape"]}: '
+                        f'pixel=({u}, {v}), '
+                        f'depth={depth}'
                     )
 
                     self.get_logger().info(
