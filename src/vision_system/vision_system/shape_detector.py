@@ -57,61 +57,52 @@ def classify_shape(contour):
         unknown
     """
 
-    # ========================================================
-    # 1. Area
-    # Remove very small contours
-    # ========================================================
-
     area = cv2.contourArea(contour)
 
     if area < 500:
         return "unknown"
 
-
-    # ========================================================
-    # 2. Contour perimeter
-    # ========================================================
-
-    perimeter = cv2.arcLength(contour, True)
+    perimeter = cv2.arcLength(
+        contour,
+        True
+    )
 
     if perimeter == 0:
         return "unknown"
 
+    # =====================================================
+    # Bounding Box
+    # =====================================================
 
-    # ========================================================
-    # 3. Polygon approximation
-    # ========================================================
+    x, y, w, h = cv2.boundingRect(contour)
+
+    if h == 0:
+        return "unknown"
+
+    aspect_ratio = float(w) / float(h)
+
+    # Reject extremely long/thin contours
+    if aspect_ratio > 2.0 or aspect_ratio < 0.5:
+        return "unknown"
+
+    # =====================================================
+    # Shape Features
+    # =====================================================
 
     approx = cv2.approxPolyDP(
         contour,
-        0.04 * perimeter,
+        0.025 * perimeter,
         True
     )
 
     vertices = len(approx)
 
-
-    # ========================================================
-    # 4. Circularity
-    #
-    # Perfect circle -> close to 1.0
-    #
-    # C = 4 * pi * area / perimeter^2
-    # ========================================================
-
     circularity = (
-        4.0 * np.pi * area
+        4.0
+        * np.pi
+        * area
         / (perimeter * perimeter)
     )
-
-
-    # ========================================================
-    # 5. Convex hull / Solidity
-    #
-    # Star has deep concave regions.
-    #
-    # solidity = contour area / convex hull area
-    # ========================================================
 
     hull = cv2.convexHull(contour)
 
@@ -120,12 +111,7 @@ def classify_shape(contour):
     if hull_area == 0:
         return "unknown"
 
-    solidity = float(area) / hull_area
-
-
-    # ========================================================
-    # Debug output
-    # ========================================================
+    solidity = area / hull_area
 
     print(
         f"vertices={vertices}, "
@@ -133,47 +119,47 @@ def classify_shape(contour):
         f"solidity={solidity:.2f}"
     )
 
-
-    # ========================================================
+    # =====================================================
     # Triangle
-    # ========================================================
+    # =====================================================
 
     if vertices == 3:
-        return "triangle"
 
+        if (
+            circularity > 0.45
+            and solidity > 0.85
+        ):
+            return "triangle"
 
-    # ========================================================
+        return "unknown"
+
+    # =====================================================
     # Star
-    # ========================================================
+    # =====================================================
 
-    if vertices >= 8 and solidity < 0.85:
-        return "star"
+    if vertices >= 6:
 
+        if solidity < 0.85:
+            return "star"
 
-    # ========================================================
+    # =====================================================
     # Circle
-    # ========================================================
+    # =====================================================
 
-    if circularity > 0.80 and vertices > 4:
+    if circularity > 0.80:
+
         return "circle"
 
+    # =====================================================
+    # Square
+    # =====================================================
 
-    # ========================================================
-    # Square / Rounded Square
-    # ========================================================
+    if vertices == 4:
 
-    x, y, w, h = cv2.boundingRect(approx)
-
-    if h > 0:
-
-        aspect_ratio = float(w) / float(h)
-
-        # Square-like shape
         if (
-            0.80 <= aspect_ratio <= 1.20
+            0.75 <= aspect_ratio <= 1.30
             and solidity > 0.85
         ):
             return "square"
-
 
     return "unknown"
