@@ -35,6 +35,39 @@ class MotionUtils:
         super().__init__()
         self.ri = robot_init_instance
 
+    def place_object(self, target_pose):
+        """
+        임의의 목표 좌표(place_pose)를 받아 접근 후 물체를 내려놓는 시나리오
+        """
+        self.target_pose = target_pose
+        self.ri.node.get_logger().info("Starting Place Motion Sequence...")
+
+        # 1. 작업 준비 위치(Home 또는 Ready Pose)로 관절 이동 (예시 관절 각도)
+        self.ri.move_joint([0, 0, 50, 0, 90, 0], vel=30, acc=30)
+
+        up_target_pose = [
+            self.target_pose[0],
+            self.target_pose[1],
+            self.target_pose[2]+200, # z축을 200mm 위로
+            self.target_pose[3],
+            self.target_pose[4],
+            self.target_pose[5]
+        ]
+
+        # 2. 목표 위치의 위로 이동
+        self.ri.move_linear_ABS(up_target_pose, vel=30, acc=30)
+
+        # 3. 목표위치에 집어넣기
+        self.ri.move_linear_REL([0, 0, -300, 0, 0, 0], vel=20, acc=20)
+
+        # 3. 그리퍼 열기 (물체 놓기)
+        self.ri.open_gripper()
+
+        # 4. 작업 완료 후 Home 위치로 복귀
+        self.ri.move_joint([0, 0, 50, 0, 90, 0], vel=30, acc=30)
+
+        self.ri.node.get_logger().info("Place Motion Sequence Finished Successfully!")
+        
     def pick_and_place_scenario(self, target_pose):
         from DSR_ROBOT2 import movej, posj
         """
