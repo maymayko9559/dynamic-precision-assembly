@@ -66,7 +66,7 @@ class AssemblyController(Node):
         self.is_object_detected = True
         self.get_logger().info(f'Detected Object - X: {self.latest_x}, Y: {self.latest_y}, Z: {self.latest_z}')
 
-    def test_run(self,is_object_detected,x,y,z,type,shape):
+    def test_run(self,is_object_detected,x,y,z):
         self.mu.pick_up([x,y,z,100.08, 179.98, 100.9])
 
         # if is_object_detected:
@@ -78,10 +78,15 @@ class AssemblyController(Node):
 
 def main(args=None):
     rclpy.init(args=args)
+    import DR_init
+        
 
     node = AssemblyController()
+    DR_init.__dsr__id = ROBOT_ID
+    DR_init.__dsr__model = ROBOT_MODEL
+    DR_init.__dsr__node = node  
     # node.test_run(node.is_object_detected,node.latest_x,node.latest_y,node.latest_z,node.type,node.shape)
-    node.test_run(True, 367, 6, 215)
+    node.test_run(True, 367, 6, 215)  # 테스트용 임시 값
     rclpy.spin(node)
 
     node.destroy_node()

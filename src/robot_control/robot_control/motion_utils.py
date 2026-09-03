@@ -58,7 +58,7 @@ class MotionUtils:
         up_object=[
             self.object_pose[0],
             self.object_pose[1],
-            self.object_pose[2]+200,
+            self.object_pose[2]+100,
             self.object_pose[3],
             self.object_pose[4],
             self.object_pose[5]
@@ -72,7 +72,7 @@ class MotionUtils:
         self.ri.node.get_logger().info('물체 위치로 하강 완료!')
         self.ri.close_gripper()
         self.ri.node.get_logger().info('물체 잡기 완료!!')
-        self.ri.move_linear_REL([0.0,0.0,200,0.0,0.0,0.0],vel=30, acc=30)
+        self.ri.move_linear_REL([0.0,0.0,100,0.0,0.0,0.0],vel=30, acc=30)
         self.ri.node.get_logger().info('물체 들고 안전하게 위로 올리기!')
 
     
