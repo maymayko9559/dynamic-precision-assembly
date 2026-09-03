@@ -33,6 +33,11 @@ class AssemblyController(Node):
     def __init__(self,node):
         super().__init__('assembly_controller')
         self.node = node
+        # 1. 최신 비전 좌표를 저장할 변수
+        self.latest_x = 0.0
+        self.latest_y = 0.0
+        self.latest_z = 0.0
+        self.is_object_detected = False
 
 def main(args=None):
     rclpy.init(args=args)

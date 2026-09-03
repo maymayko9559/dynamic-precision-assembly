@@ -30,17 +30,23 @@
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 from .robot_init import RobotInit
+
+
 class MotionUtils:
     def __init__(self, robot_init_instance: RobotInit):
         super().__init__()
         self.ri = robot_init_instance
+        
 
-    def pick_and_place_scenario(self, target_pose):
-        from DSR_ROBOT2 import movej, posj
+        # 1. 최신 비전 좌표를 저장할 변수
+        
+
+    def pick_up(self, object_pose):
+        from DSR_ROBOT2 import movej, posj,wait
         """
         임의의 목표 좌표(target_pose)를 받아 접근 후 물체를 집어 올리는 시나리오
         """
-        self.target_pose = target_pose
+        self.object_pose = object_pose
         self.ri.node.get_logger().info("Starting Pick and Place Motion Sequence...")
 
         # 1. 시작 전 그리퍼 확실히 열어두기
@@ -49,69 +55,113 @@ class MotionUtils:
 
         # 2. 작업 준비 위치(Home 또는 Ready Pose)로 관절 이동 (예시 관절 각도)
         self.ri.node.get_logger().info("가기 전")
-        self.ri.move_joint([0,0,50,0,90,0],vel=30, acc=30)
+        self.ri.move_joint([0,0,90,0,90,0],vel=30, acc=30)
         # self.ri.move_joint([0,0,50,0,90,0], vel=30, acc=30)
         self.ri.node.get_logger().info("갔다")
-        self.ri.move_joint(self.target_pose, vel=30, acc=30)
-
-        
-
-        self.ri.node.get_logger().info("Motion Sequence Finished Successfully!")
-    def test_move_linear_ABS(self,target_pose):
-        self.target_pose=target_pose
-        self.ri.node.get_logger().info("ABS무브L시작!!")
-        self.ri.move_linear_ABS(self.target_pose,vel=20,acc=20)
-    def test_move_linear_REL(self,offset_pose):
-        self.offset_pose=offset_pose
-        self.ri.node.get_logger().info("REL무브L시작!!")
-        self.ri.move_linear_REL(self.offset_pose,vel=20,acc=20)
-
-    def async_pick_and_place_run(self, target_pose, offset_pose):
-        import threading
-        import time
-        self.ri.node.get_logger().info("비동기 Pick & Place Test Start...")
-
-        # 1. 시작 전 그리퍼 열기
-        self.ri.open_gripper()
-        
-        # 2. 준비 자세 이동
-        self.ri.move_joint([0, 0, 50, 0, 90, 0], vel=30, acc=30)
-
-        # 3. [핵심] 절대 좌표 이동(movel)을 백그라운드 스레드로 실행
-        motion_thread = threading.Thread(
-            target=self.ri.move_linear_ABS,
-            args=(target_pose,),
-            kwargs={"vel": 20, "acc": 20}
-        )
-        motion_thread.start()
-
-        # --------------------------------------------------------
-        # 🚀 로봇이 이동하는 동안(동시에) 실행될 제어 영역
-        # --------------------------------------------------------
-        self.ri.node.get_logger().info("로봇 이동 중... 그리퍼 타이밍 대기")
-        
-        # 이동 시작 후 원하는 타이밍(예: 1.5초 뒤 도착 시점)에 그리퍼 작동
-        time.sleep(1.0) 
-        
-        self.ri.node.get_logger().info("이동 도중 그리퍼 CLOSE 작동!")
+        up_object=[
+            self.object_pose[0],
+            self.object_pose[1],
+            self.object_pose[2]+200,
+            self.object_pose[3],
+            self.object_pose[4],
+            self.object_pose[5]
+        ]
+        self.ri.move_linear_ABS(self.object_pose, vel=30, acc=30)
+        wait(1.0)
+        self.ri.move_linear_REL([0.0,0.0,-100,0.0,0.0,0.0],vel=30, acc=30)
         self.ri.close_gripper()
+        self.ri.move_linear_REL([0.0,0.0,200,0.0,0.0,0.0],vel=30, acc=30)
+
+    def place_object(self, target_pose):
+        """
+        임의의 목표 좌표(place_pose)를 받아 접근 후 물체를 내려놓는 시나리오
+        """
+        self.target_pose = target_pose
+        self.ri.node.get_logger().info("Starting Place Motion Sequence...")
+
+        
+        
+
+        up_target_pose = [
+            self.target_pose[0],
+            self.target_pose[1],
+            self.target_pose[2]+50, # z축을 50mm 위로
+            self.target_pose[3],
+            self.target_pose[4],
+            self.target_pose[5]
+        ]
+
+        # 2. 목표 위치의 위로 이동
+        self.ri.move_linear_ABS(up_target_pose, vel=30, acc=30)
+
+        # 3. 목표위치에 집어넣기
+        self.ri.move_linear_REL([0, 0, -50, 0, 0, 0], vel=20, acc=20)
+
+        # 3. 그리퍼 열기 (물체 놓기)
         self.ri.open_gripper()
-        self.ri.close_gripper()
-        # --------------------------------------------------------
 
-        # 4. 모션 스레드가 완전히 끝날 때까지 대기
-        motion_thread.join()
+        # 4. 작업 완료 후 Home 위치로 복귀
+        self.ri.move_joint([0, 0, 90, 0, 90, 0], vel=30, acc=30)
 
-        # 5. 이후 상대 좌표 이동 수행
-        self.ri.node.get_logger().info("상대 좌표 이동 수행")
-        self.ri.move_linear_REL(offset_pose, vel=20, acc=20)
+        self.ri.node.get_logger().info("도형 이동작업 완료")
+        self.ri.node.get_logger().info("place_object 동작 시퀀스 성공")
+    # def test_move_linear_ABS(self,target_pose):
+    #     self.target_pose=target_pose
+    #     self.ri.node.get_logger().info("ABS무브L시작!!")
+    #     self.ri.move_linear_ABS(self.target_pose,vel=20,acc=20)
+    # def test_move_linear_REL(self,offset_pose):
+    #     self.offset_pose=offset_pose
+    #     self.ri.node.get_logger().info("REL무브L시작!!")
+    #     self.ri.move_linear_REL(self.offset_pose,vel=20,acc=20)
+
+
+    # def async_pick_and_place_run(self, target_pose, offset_pose):
+    #     import threading
+    #     import time
+    #     self.ri.node.get_logger().info("비동기 Pick & Place Test Start...")
+
+    #     # 1. 시작 전 그리퍼 열기
+    #     self.ri.open_gripper()
+        
+    #     # 2. 준비 자세 이동
+    #     self.ri.move_joint([0, 0, 50, 0, 90, 0], vel=30, acc=30)
+
+    #     # 3. [핵심] 절대 좌표 이동(movel)을 백그라운드 스레드로 실행
+    #     motion_thread = threading.Thread(
+    #         target=self.ri.move_linear_ABS,
+    #         args=(target_pose,),
+    #         kwargs={"vel": 20, "acc": 20}
+    #     )
+    #     motion_thread.start()
+
+    #     # --------------------------------------------------------
+    #     # 🚀 로봇이 이동하는 동안(동시에) 실행될 제어 영역
+    #     # --------------------------------------------------------
+    #     self.ri.node.get_logger().info("로봇 이동 중... 그리퍼 타이밍 대기")
+        
+    #     # 이동 시작 후 원하는 타이밍(예: 1.5초 뒤 도착 시점)에 그리퍼 작동
+    #     time.sleep(1.0) 
+        
+    #     self.ri.node.get_logger().info("이동 도중 그리퍼 CLOSE 작동!")
+    #     self.ri.close_gripper()
+    #     self.ri.open_gripper()
+    #     self.ri.close_gripper()
+    #     # --------------------------------------------------------
+
+    #     # 4. 모션 스레드가 완전히 끝날 때까지 대기
+    #     motion_thread.join()
+
+    #     # 5. 이후 상대 좌표 이동 수행
+    #     self.ri.node.get_logger().info("상대 좌표 이동 수행")
+    #     self.ri.move_linear_REL(offset_pose, vel=20, acc=20)
 
     
     def run(self):
-        target = [367.37, 6.30, 215.33, 100.08, 179.98, 100.9]
-        offset = [0, -100, 0, 0, 0, 0]
-        
-        self.async_pick_and_place_run(target, offset)
+        object = [367.37, 6.30, 215.33, 100.08, 179.98, 100.9]
+        target = [32,-451.23,132.96,109.07,-177.17,-161.06]
+        self.pick_up(object)
+        self.place_object(target)
+        # self.async_pick_and_place_run(target, offset)
         
      # 절대좌표 홈위치 == posj([0,0,90,0,90,0])
      # self.test_move_linear_REL([0,-100,0,0,0,0])
