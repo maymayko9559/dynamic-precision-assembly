@@ -113,11 +113,11 @@ def classify_shape(contour):
 
     solidity = area / hull_area
 
-    print(
-        f"vertices={vertices}, "
-        f"circularity={circularity:.2f}, "
-        f"solidity={solidity:.2f}"
-    )
+    # print(
+    #     f"vertices={vertices}, "
+    #     f"circularity={circularity:.2f}, "
+    #     f"solidity={solidity:.2f}"
+    # )
 
     # =====================================================
     # Triangle
