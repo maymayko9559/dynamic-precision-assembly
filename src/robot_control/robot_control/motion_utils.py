@@ -75,17 +75,17 @@ class MotionUtils:
         임의의 목표 좌표(target_pose)를 받아 접근 후 물체를 집어 올리는 시나리오
         """
         self.object_pose = object_pose
-        self.ri.node.get_logger().info("Starting Pick and Place Motion Sequence...")
+        self.ri.node.get_logger().info("pick_up 동작 시퀀스 시작")
 
         # 1. 시작 전 그리퍼 확실히 열어두기
         self.ri.close_gripper()
         self.ri.open_gripper()
 
         # 2. 작업 준비 위치(Home 또는 Ready Pose)로 관절 이동 (예시 관절 각도)
-        self.ri.node.get_logger().info("가기 전")
+        self.ri.node.get_logger().info("시작지점 가기 전")
         self.ri.move_joint([0,0,90,0,90,0],vel=30, acc=30)
         # self.ri.move_joint([0,0,50,0,90,0], vel=30, acc=30)
-        self.ri.node.get_logger().info("갔다")
+        self.ri.node.get_logger().info("시작지점 갔다")
         up_object=[
             self.object_pose[0],
             self.object_pose[1],
@@ -100,36 +100,7 @@ class MotionUtils:
         self.ri.close_gripper()
         self.ri.move_linear_REL([0.0,0.0,200,0.0,0.0,0.0],vel=30, acc=30)
 
-    def pick_and_place_scenario(self, target_pose):
-        from DSR_ROBOT2 import movej, posj
-        """
-        임의의 목표 좌표(target_pose)를 받아 접근 후 물체를 집어 올리는 시나리오
-        """
-        self.object_pose = object_pose
-        self.ri.node.get_logger().info("Starting Pick and Place Motion Sequence...")
-
-        # 1. 시작 전 그리퍼 확실히 열어두기
-        self.ri.close_gripper()
-        self.ri.open_gripper()
-
-        # 2. 작업 준비 위치(Home 또는 Ready Pose)로 관절 이동 (예시 관절 각도)
-        self.ri.node.get_logger().info("가기 전")
-        self.ri.move_joint([0,0,90,0,90,0],vel=30, acc=30)
-        # self.ri.move_joint([0,0,50,0,90,0], vel=30, acc=30)
-        self.ri.node.get_logger().info("갔다")
-        up_object=[
-            self.object_pose[0],
-            self.object_pose[1],
-            self.object_pose[2]+200,
-            self.object_pose[3],
-            self.object_pose[4],
-            self.object_pose[5]
-        ]
-        self.ri.move_linear_ABS(self.object_pose, vel=30, acc=30)
-        wait(1.0)
-        self.ri.move_linear_REL([0.0,0.0,-100,0.0,0.0,0.0],vel=30, acc=30)
-        self.ri.close_gripper()
-        self.ri.move_linear_REL([0.0,0.0,200,0.0,0.0,0.0],vel=30, acc=30)
+    
 
     def place_object(self, target_pose):
         """
