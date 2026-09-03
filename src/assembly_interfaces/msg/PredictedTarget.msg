@@ -1,7 +1,7 @@
 # ============================================================
 # PredictedTarget.msg
 # ============================================================
-# predition -> PredictedTarget.msg
+# prediction -> PredictedTarget.msg
 #
 # 현재 Target
 # x = 500 mm
