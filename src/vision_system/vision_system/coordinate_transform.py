@@ -30,16 +30,47 @@ class CoordinateTransform:
     # Pixel -> Camera
     # ========================================================
 
-    def pixel_to_camera(self, pixel, depth=None):
+
+    def pixel_to_camera(self, u, v, depth, intrinsics):
         """
-        Convert pixel coordinates to camera coordinates.
+        Convert color pixel + aligned depth
+        to camera 3D coordinates.
+
+        Parameters
+        ----------
+        u, v : int
+            Color image pixel coordinates.
+
+        depth : float
+            Raw aligned depth value.
+            Current RealSense stream uses 16UC1.
+
+        intrinsics : dict
+            Camera intrinsic parameters:
+            fx, fy, cx, cy
+
+        Returns
+        -------
+        tuple
+            (X, Y, Z) in camera coordinate system.
         """
 
-        # TODO:
-        # RealSense Intrinsic + Depth
+        if depth <= 0:
+            return None
 
-        return None
+        fx = intrinsics["fx"]
+        fy = intrinsics["fy"]
+        cx = intrinsics["cx"]
+        cy = intrinsics["cy"]
 
+        Z = float(depth)
+
+        X = (u - cx) * Z / fx
+        Y = (v - cy) * Z / fy
+
+        return (X, Y, Z)
+
+    
     # ========================================================
     # Camera -> Robot
     # ========================================================

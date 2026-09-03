@@ -62,7 +62,7 @@ import cv2
 import numpy as np
 
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
 
 from .board_detector import BoardDetector
@@ -124,7 +124,27 @@ class VisionManager(Node):
         depth_topic = self.get_parameter("depth_topic").value
 
 
+        # ============================================================
+        # Camera Info Subscriber
+        # ============================================================
 
+        self.declare_parameter(
+            "camera_info_topic",
+            "/camera/camera/aligned_depth_to_color/camera_info"
+        )
+
+        camera_info_topic = self.get_parameter(
+            "camera_info_topic"
+        ).value
+
+        self.camera_intrinsics = None
+
+        self.camera_info_sub = self.create_subscription(
+            CameraInfo,
+            camera_info_topic,
+            self.camera_info_callback,
+            10
+        )
         # ============================================================
         # Color Image Subscriber
         # ============================================================
@@ -162,6 +182,14 @@ class VisionManager(Node):
         
         self.get_logger().info("Vision Manager started.")
 
+    def camera_info_callback(self, msg):
+
+        self.camera_intrinsics = {
+            "fx": msg.k[0],
+            "fy": msg.k[4],
+            "cx": msg.k[2],
+            "cy": msg.k[5]
+        }
 
     def depth_callback(self, msg):
 
@@ -263,15 +291,9 @@ class VisionManager(Node):
 
         pick_roi = raw_frame.copy()
 
-        board_points = board_corners.astype(
-            np.int32
-        )
+        board_points = board_corners.astype(np.int32)
 
-        cv2.fillPoly(
-            pick_roi,
-            [board_points],
-            (0, 0, 0)
-        )
+        cv2.fillPoly(pick_roi, [board_points], (0, 0, 0))
 
         return pick_roi
 
@@ -291,13 +313,7 @@ class VisionManager(Node):
         )
 
         # Draw center
-        cv2.circle(
-            image,
-            center,
-            5,
-            (0, 0, 255),
-            -1
-        )
+        cv2.circle(image, center, 5, (0, 0, 255), -1)
 
         # Draw shape name
         cv2.putText(
@@ -313,140 +329,156 @@ class VisionManager(Node):
             2
         )
 
-    # =========================================================
-    # Camera Callback
-    # =========================================================
-    def color_callback(self, msg):
+    def is_camera_ready(self):
 
-        try:
-
-            frame = self.bridge.imgmsg_to_cv2(
-                msg,
-                desired_encoding="bgr8"
+        if self.latest_depth_frame is None:
+            self.get_logger().info(
+                "Waiting for depth image...",
+                throttle_duration_sec=1.0
             )
+            return False
+
+        if self.camera_intrinsics is None:
+            self.get_logger().info(
+                "Waiting for camera intrinsics...",
+                throttle_duration_sec=1.0
+            )
+            return False
+
+        return True
+
+    def detect_board(self, raw_frame, debug_frame):
+
+        corners, ids = self.board_detector.detect(raw_frame)
+
+        board_corners = self.board_detector.get_board_corners(corners, ids)
+
+        debug_frame = self.board_detector.draw_board(debug_frame, corners, ids)
+
+        if board_corners is not None:
+            debug_frame = self.board_detector.draw_board_boundary(
+                debug_frame,
+                board_corners
+            )
+
+        return board_corners, debug_frame
+
+
+    def process_target_positions(self, targets, board_corners, debug_frame):
+
+        for target in targets:
+
+            # Board ROI pixel
+            board_center = target["center"]
+
+            # Board ROI pixel -> Camera pixel
+            camera_center = (
+                self.board_detector.board_to_camera_pixel(
+                    board_center,
+                    board_corners
+                )
+            )
+
+            u, v = camera_center
+
+            # Draw position on original camera image
+            cv2.circle(
+                debug_frame,
+                camera_center,
+                8,
+                (0, 0, 255),
+                -1
+            )
+
+            # Camera pixel + Depth -> Camera XYZ
+            camera_position = self.get_camera_position(u, v)
+
+            if camera_position is None:
+                continue
+
+            self.get_logger().info(
+                f'{target["shape"]}: '
+                f'board={board_center}, '
+                f'pixel=({u}, {v}), '
+                f'camera_xyz={camera_position}'
+            )
+
+    def get_camera_position(self, u, v):
+
+        h, w = self.latest_depth_frame.shape[:2]
+
+        if not (0 <= u < w and 0 <= v < h):
+            return None
+
+        depth = self.latest_depth_frame[v, u]
+
+        if depth <= 0:
+            return None
+
+        return self.coordinate_transform.pixel_to_camera(
+            u,
+            v,
+            depth,
+            self.camera_intrinsics
+        )
+
+    def show_windows(self, debug_frame, board_roi, pick_roi):
+
+        cv2.imshow("Target Board ROI", board_roi)
+
+        cv2.imshow("Pick ROI", pick_roi)
+
+        self.show_debug(debug_frame)
+
+
+    def show_debug(self, debug_frame):
+
+        cv2.imshow(
+            "Vision Manager - Camera",
+            debug_frame
+        )
+
+        cv2.waitKey(1)
+
+
+    def color_callback(self, msg):
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
 
             raw_frame = frame.copy()
             debug_frame = frame.copy()
 
-            # =====================================================
-            # Wait for Depth Image
-            # =====================================================
-
-            if self.latest_depth_frame is None:
-
-                self.get_logger().info(
-                    "Waiting for depth image...",
-                    throttle_duration_sec=1.0
-                )
-
+            if not self.is_camera_ready():
                 return
-            
-            # =====================================================
-            # Board Detection
-            # =====================================================
 
-            corners, ids = self.board_detector.detect(
-                raw_frame
-            )
+            board_corners, debug_frame = self.detect_board(raw_frame, debug_frame)
 
-            board_corners = self.board_detector.get_board_corners(
-                corners,
-                ids
-            )
-
-            debug_frame = self.board_detector.draw_board(
-                debug_frame,
-                corners,
-                ids
-            )
-
-            # =====================================================
-            # Board Found
-            # =====================================================
-
-            if board_corners is not None:
-
-                debug_frame = self.board_detector.draw_board_boundary(
-                    debug_frame,
-                    board_corners
-                )
-
-                # Target detection
-                board_roi, targets = self.process_targets(raw_frame, board_corners)
-
-
-                # =====================================================
-                # TEST: Board ROI Pixel -> Camera Pixel
-                # =====================================================
-
-                for target in targets:
-
-                    board_center = target["center"]
-
-                    camera_center = (
-                        self.board_detector.board_to_camera_pixel(
-                            board_center,
-                            board_corners
-                        )
-                    )
-
-                    u, v = camera_center
-
-                    depth = self.latest_depth_frame[v, u]
-
-                    self.get_logger().info(
-                        f'{target["shape"]}: '
-                        f'pixel=({u}, {v}), '
-                        f'depth={depth}'
-                    )
-
-                    self.get_logger().info(
-                        f'{target["shape"]}: '
-                        f'board={board_center}, '
-                        f'camera={camera_center}'
-                    )
-
-                    # Draw converted position on original camera image
-                    cv2.circle(
-                        debug_frame,
-                        camera_center,
-                        8,
-                        (0, 0, 255),
-                        -1
-                    )
-                # Object detection
-                pick_roi, objects = self.process_objects(raw_frame, board_corners)
-
-                cv2.imshow(
-                    "Target Board ROI",
-                    board_roi
-                )
-
-                cv2.imshow(
-                    "Pick ROI",
-                    pick_roi
-                )
-
-            else:
-
+            if board_corners is None:
                 self.get_logger().info(
                     "Waiting for ArUco IDs 0, 1, 2, 3...",
                     throttle_duration_sec=1.0
                 )
 
-            # =====================================================
-            # Main Debug Window
-            # =====================================================
+                self.show_debug(debug_frame)
+                return
 
-            cv2.imshow(
-                "Vision Manager - Camera",
+            board_roi, targets = self.process_targets(raw_frame, board_corners)
+
+            self.process_target_positions(
+                targets,
+                board_corners,
                 debug_frame
             )
 
-            cv2.waitKey(1)
+            pick_roi, objects = self.process_objects(raw_frame, board_corners)
+
+            self.show_windows(
+                debug_frame,
+                board_roi,
+                pick_roi
+            )
 
         except Exception as e:
-
             self.get_logger().error(
                 f"Failed to process camera image: {e}"
             )
