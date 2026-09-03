@@ -21,10 +21,25 @@
 # ============================================================
 
 
+import os
+import numpy as np
+from scipy.spatial.transform import Rotation
+
+
+from ament_index_python.packages import get_package_share_directory
+
 class CoordinateTransform:
 
     def __init__(self):
-        pass
+        # ====================================================
+        # Load Hand-Eye Calibration Matrix
+        # ====================================================
+
+        package_share = get_package_share_directory('vision_system')
+
+        calibration_file = os.path.join(package_share, 'config', 'T_gripper2camera.npy')
+
+        self.T_gripper2camera = np.load(calibration_file)
 
     # ========================================================
     # Pixel -> Camera
@@ -75,25 +90,57 @@ class CoordinateTransform:
     # Camera -> Robot
     # ========================================================
 
-    def camera_to_robot(self, camera_position):
-        """
-        Convert camera coordinates to Robot BASE coordinates.
-        """
+    def camera_to_robot(self, camera_position, T_base2gripper):
+            """
+            Convert camera coordinates
+            to Robot BASE coordinates.
 
-        # TODO:
-        # Camera-Robot calibration
+            Parameters
+            ----------
+            camera_position : tuple
+                (X, Y, Z) in camera coordinate system.
 
-        return None
+            T_base2gripper : numpy.ndarray
+                4x4 transformation matrix representing
+                the current robot gripper pose in BASE frame.
 
-    # ========================================================
-    # Pixel -> Robot
-    # ========================================================
+            Returns
+            -------
+            tuple
+                (X, Y, Z) in Robot BASE coordinate system.
+            """
 
-    def pixel_to_robot(self, pixel, depth=None):
-        """
-        Convert pixel coordinates directly to Robot BASE.
-        """
+            if camera_position is None:
+                return None
 
-        # TODO: Implement later
+            # ----------------------------------------------------
+            # BASE -> Camera Transformation
+            #
+            # Same relationship used in the original
+            # hand-eye calibration code.
+            # ----------------------------------------------------
 
-        return None
+            T_base2camera = (T_base2gripper @ self.T_gripper2camera)
+
+            X, Y, Z = camera_position
+
+            camera_point = np.array([X, Y, Z, 1.0])
+
+            base_point = (T_base2camera @ camera_point)
+
+            return (
+                float(base_point[0]),
+                float(base_point[1]),
+                float(base_point[2])
+            )
+
+    def get_robot_pose_matrix(self, x, y, z, rx, ry, rz):
+
+        R = Rotation.from_euler('ZYZ',[rx, ry, rz], degrees=True).as_matrix()
+
+        T = np.eye(4)
+
+        T[:3, :3] = R
+        T[:3, 3] = [x, y, z]
+
+        return T
