@@ -29,7 +29,6 @@ import rclpy
 from rclpy.node import Node
 from assembly_interfaces.msg import DetectedObject
 from robot_control.robot_init import RobotInit
-from robot_control.motion_utils import MotionUtils
 from .motion_utils import MotionUtils
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
