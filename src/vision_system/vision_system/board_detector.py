@@ -119,7 +119,6 @@ class BoardDetector:
         Extract the target board region from the image.
         """
 
-
         if board_info is None:
             return None
 
