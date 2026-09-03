@@ -278,20 +278,6 @@ class BoardDetector:
 
         return board_corners
 
-    
-    # ========================================================
-    # Board Pixel -> Image Pixel
-    # ========================================================
-
-    def board_to_image_pixel(self, point, board_info):
-        """
-        Convert Board ROI pixel coordinates
-        to full camera image pixel coordinates.
-        """
-
-        # TODO: Implement later
-
-        return point
 
     # ========================================================
     # Debug
