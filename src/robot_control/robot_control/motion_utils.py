@@ -26,7 +26,7 @@
 # ============================================================
 # motion_utils.py
 # ============================================================
-import DR_init
+
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 from .robot_init import RobotInit
@@ -66,12 +66,55 @@ class MotionUtils:
         self.ri.node.get_logger().info("REL무브L시작!!")
         self.ri.move_linear_REL(self.offset_pose,vel=20,acc=20)
 
+    def async_pick_and_place_run(self, target_pose, offset_pose):
+        import threading
+        import time
+        self.ri.node.get_logger().info("비동기 Pick & Place Test Start...")
+
+        # 1. 시작 전 그리퍼 열기
+        self.ri.open_gripper()
+        
+        # 2. 준비 자세 이동
+        self.ri.move_joint([0, 0, 50, 0, 90, 0], vel=30, acc=30)
+
+        # 3. [핵심] 절대 좌표 이동(movel)을 백그라운드 스레드로 실행
+        motion_thread = threading.Thread(
+            target=self.ri.move_linear_ABS,
+            args=(target_pose,),
+            kwargs={"vel": 20, "acc": 20}
+        )
+        motion_thread.start()
+
+        # --------------------------------------------------------
+        # 🚀 로봇이 이동하는 동안(동시에) 실행될 제어 영역
+        # --------------------------------------------------------
+        self.ri.node.get_logger().info("로봇 이동 중... 그리퍼 타이밍 대기")
+        
+        # 이동 시작 후 원하는 타이밍(예: 1.5초 뒤 도착 시점)에 그리퍼 작동
+        time.sleep(1.5) 
+        
+        self.ri.node.get_logger().info("이동 도중 그리퍼 CLOSE 작동!")
+        self.ri.close_gripper()
+        self.ri.open_gripper()
+        self.ri.close_gripper()
+        # --------------------------------------------------------
+
+        # 4. 모션 스레드가 완전히 끝날 때까지 대기
+        motion_thread.join()
+
+        # 5. 이후 상대 좌표 이동 수행
+        self.ri.node.get_logger().info("상대 좌표 이동 수행")
+        self.ri.move_linear_REL(offset_pose, vel=20, acc=20)
+
     
     def run(self):
+        target = [367.37, 6.30, 215.33, 100.08, 179.98, 100.9]
+        offset = [0, -100, 0, 0, 0, 0]
         
-        self.pick_and_place_scenario([0,0,90,0,90,0])
-        self.test_move_linear_ABS([367.37,6.30,215.33,100.08,179.98,100.9]) # 절대좌표 홈위치 == posj([0,0,90,0,90,0])
-        self.test_move_linear_REL([0,-100,0,0,0,0])
+        self.async_pick_and_place_run(target, offset)
+        
+     # 절대좌표 홈위치 == posj([0,0,90,0,90,0])
+     # self.test_move_linear_REL([0,-100,0,0,0,0])
 
 # 임시로 이 파일 단독 실행을 테스트하기 위한 메인 함수
 # motion_utils.py 의 main 함수 부분 수정
@@ -79,6 +122,8 @@ class MotionUtils:
 def main(args=None):
     import rclpy
     from rclpy.node import Node
+    import DR_init
+    
     
 
     rclpy.init(args=args)
