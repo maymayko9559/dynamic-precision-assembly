@@ -114,12 +114,12 @@ class BoardDetector:
     # Extract Board ROI
     # ========================================================
 
-    def extract_board_roi(self, frame, board_info):
+    def extract_board_roi(self, frame, board_corners):
         """
         Extract the target board region from the image.
         """
 
-        if board_info is None:
+        if board_corners is None:
             return None
 
         # =====================================================
@@ -144,7 +144,7 @@ class BoardDetector:
         # =====================================================
 
         matrix = cv2.getPerspectiveTransform(
-            board_info,
+            board_corners,
             destination
         )
 
