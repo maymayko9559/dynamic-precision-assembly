@@ -103,21 +103,17 @@ def preprocess_image(image,
 def find_contours(image):
     """
     Find contours from the processed image.
+
+    Returns: List of contours
     """
 
     if image is None:
         return []
-    
-    # TODO: Implement later
-    
-    # ============================================================
-    # 외곽선 검출 및 꼭지점 구하기
-    # ============================================================
-    
-    # 가장 바깥 외곽선만 검출, 직선 구간은 끝 점만 저장
-    found_con, _ = cv2.findContours(image.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # OpenCV 3 : (image, contours, hierarchy)
-    # OpenCV 4 : (contours, hierarchy)
-    contours = found_con[0] if len(found_con) == 2 else found_con[1]
-    return [contours] if contours is not None else []
+    contours, _ = cv2.findContours(
+        image.copy(),
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    return contours
