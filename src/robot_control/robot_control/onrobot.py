@@ -105,7 +105,7 @@ class RG():
         if result.isError():
             raise ConnectionError(f"RG gripper write failed (reg 1, width): {result}")
 
-    def close_gripper(self, force_val=400):
+    def close_gripper(self, force_val=300):
         params = [force_val, 0, 16]
         print("Start closing gripper.")
         result = self.client.write_registers(
@@ -113,7 +113,7 @@ class RG():
         if result.isError():
             raise ConnectionError(f"RG gripper close failed: {result}")
 
-    def open_gripper(self, force_val=400):
+    def open_gripper(self, force_val=300):
         params = [force_val, self.max_width, 16]
         print("Start opening gripper.")
         result = self.client.write_registers(
