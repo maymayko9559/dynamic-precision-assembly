@@ -8,6 +8,9 @@
 #
 # Main Responsibilities:
 # - Receive detected object/target information
+# - Store detected objects and targets by shape
+# - Match object with corresponding target
+# - Calculate required rotation angle
 # - Request current robot pose
 # - Publish current robot pose
 # - Approach the target
@@ -22,10 +25,13 @@
 #
 # 주요 역할:
 # - Vision 검출 결과 수신
+# - Object / Target 정보를 도형별로 저장
+# - 동일한 도형의 Object / Target 매칭
+# - 필요한 회전 각도 계산
 # - 현재 로봇 Pose 요청
 # - 현재 로봇 Pose Publish
 # - Target 접근
-# - Target 위치 정렬
+# - Target 위치 및 각도 정렬
 # - 도형 삽입
 # - 작업 완료 처리
 # ============================================================
@@ -34,7 +40,6 @@
 import rclpy
 
 from rclpy.node import Node
-
 from std_msgs.msg import Float64MultiArray
 
 from assembly_interfaces.msg import DetectedObject
@@ -64,18 +69,38 @@ class AssemblyController(Node):
         )
 
         # ====================================================
-        # Latest Vision Detection
+        # Detected Objects
+        # ====================================================
+        #
+        # Example:
+        #
+        # self.objects["triangle"] = {
+        #     "x": 200.0,
+        #     "y": 50.0,
+        #     "z": 100.0,
+        #     "angle": 20.0
+        # }
+        #
         # ====================================================
 
-        self.latest_x = 0.0
-        self.latest_y = 0.0
-        self.latest_z = 0.0
+        self.objects = {}
 
-        self.type = ""
-        self.shape = ""
+        # ====================================================
+        # Detected Targets
+        # ====================================================
+        #
+        # Example:
+        #
+        # self.targets["triangle"] = {
+        #     "x": 370.0,
+        #     "y": 47.0,
+        #     "z": 107.0,
+        #     "angle": 65.0
+        # }
+        #
+        # ====================================================
 
-        self.is_object_detected = False
-
+        self.targets = {}
 
         # ====================================================
         # Robot Initialization
@@ -86,7 +111,6 @@ class AssemblyController(Node):
         self.mu = MotionUtils(
             self.robot_init
         )
-
 
         # ====================================================
         # Vision Detection Subscriber
@@ -103,7 +127,6 @@ class AssemblyController(Node):
             "DetectedObject 구독 시작"
         )
 
-
         # ====================================================
         # Robot Pose Publisher
         # ====================================================
@@ -114,10 +137,10 @@ class AssemblyController(Node):
             10
         )
 
-
         # ====================================================
         # Robot Pose Request State
         # ====================================================
+        #
         # True:
         #     이전 GetCurrentPosx 요청의 응답을 기다리는 중
         #
@@ -130,10 +153,10 @@ class AssemblyController(Node):
 
         self.pose_request_pending = False
 
-
         # ====================================================
         # Robot Pose Timer
         # ====================================================
+        #
         # 0.1 sec = 10 Hz
         #
         # 0.1초마다 현재 TCP Pose를 요청한다.
@@ -144,11 +167,9 @@ class AssemblyController(Node):
             self.request_robot_pose
         )
 
-
         self.get_logger().info(
             "Assembly Controller started."
         )
-
 
     # ========================================================
     # Request Current Robot Pose
@@ -170,7 +191,6 @@ class AssemblyController(Node):
         # pending 상태로 변경
         if requested:
             self.pose_request_pending = True
-
 
     # ========================================================
     # Current Robot Pose Response
@@ -198,7 +218,6 @@ class AssemblyController(Node):
 
                 return
 
-
             # =================================================
             # Check Pose Data
             # =================================================
@@ -211,14 +230,15 @@ class AssemblyController(Node):
 
                 return
 
-
             pose_data = response.task_pos_info[0].data
-
 
             # =================================================
             # Expected:
             #
             # [x, y, z, rx, ry, rz]
+            #
+            # task_pos_info may contain additional data.
+            # Only the first 6 values are used.
             # =================================================
 
             if len(pose_data) < 6:
@@ -228,7 +248,6 @@ class AssemblyController(Node):
                 )
 
                 return
-
 
             # =================================================
             # Convert Pose
@@ -243,7 +262,6 @@ class AssemblyController(Node):
                 float(pose_data[5]),
             ]
 
-
             # =================================================
             # Publish Robot Pose
             # =================================================
@@ -254,13 +272,11 @@ class AssemblyController(Node):
 
             self.robot_pose_pub.publish(msg)
 
-
         except Exception as e:
 
             self.get_logger().error(
                 f"Failed to get robot pose: {e}"
             )
-
 
     # ========================================================
     # Vision Detection Callback
@@ -270,29 +286,203 @@ class AssemblyController(Node):
         self,
         msg: DetectedObject
     ):
-
         """
-        Vision System에서 검출 결과가 들어오면 호출된다.
+        Vision System에서 Object / Target 검출 결과가
+        들어오면 호출된다.
         """
 
-        self.latest_x = msg.x
-        self.latest_y = msg.y
-        self.latest_z = msg.z
+        # ====================================================
+        # Object
+        # ====================================================
 
-        self.type = msg.type
-        self.shape = msg.shape
+        if msg.type == "object":
 
-        self.is_object_detected = True
+            self.objects[msg.shape] = {
+                "x": msg.x,
+                "y": msg.y,
+                "z": msg.z,
+                "angle": msg.angle,
+            }
 
+            self.get_logger().info(
+                f"[OBJECT] "
+                f"Shape: {msg.shape}, "
+                f"X: {msg.x:.2f}, "
+                f"Y: {msg.y:.2f}, "
+                f"Z: {msg.z:.2f}, "
+                f"Angle: {msg.angle:.2f}"
+            )
 
-        self.get_logger().info(
-            f"Detected {self.type} - "
-            f"Shape: {self.shape}, "
-            f"X: {self.latest_x:.2f}, "
-            f"Y: {self.latest_y:.2f}, "
-            f"Z: {self.latest_z:.2f}"
+        # ====================================================
+        # Target
+        # ====================================================
+
+        elif msg.type == "target":
+
+            self.targets[msg.shape] = {
+                "x": msg.x,
+                "y": msg.y,
+                "z": msg.z,
+                "angle": msg.angle,
+            }
+
+            self.get_logger().info(
+                f"[TARGET] "
+                f"Shape: {msg.shape}, "
+                f"X: {msg.x:.2f}, "
+                f"Y: {msg.y:.2f}, "
+                f"Z: {msg.z:.2f}, "
+                f"Angle: {msg.angle:.2f}"
+            )
+
+        else:
+
+            self.get_logger().warning(
+                f"Unknown detection type: {msg.type}"
+            )
+
+            return
+
+        # ====================================================
+        # Check Object / Target Match
+        # ====================================================
+
+        self.check_shape_match(msg.shape)
+
+    # ========================================================
+    # Check Shape Match
+    # ========================================================
+
+    def check_shape_match(self, shape):
+        """
+        Check whether both an object and its corresponding
+        target have been detected.
+
+        동일한 Shape의 Object와 Target이 모두 존재하는지
+        확인한다.
+        """
+
+        if shape not in self.objects:
+            return
+
+        if shape not in self.targets:
+            return
+
+        obj = self.objects[shape]
+        target = self.targets[shape]
+
+        # ====================================================
+        # Calculate Rotation Difference
+        # ====================================================
+
+        delta_angle = self.calculate_rotation_difference(
+            shape,
+            obj["angle"],
+            target["angle"]
         )
 
+        if delta_angle is None:
+
+            self.get_logger().warning(
+                f"Cannot calculate rotation for: {shape}"
+            )
+
+            return
+
+        # ====================================================
+        # Match Result
+        # ====================================================
+
+        self.get_logger().info(
+            f"[MATCH] {shape} | "
+            f"Object Angle: {obj['angle']:.2f} deg | "
+            f"Target Angle: {target['angle']:.2f} deg | "
+            f"Rotation: {delta_angle:.2f} deg"
+        )
+
+    # ========================================================
+    # Calculate Rotation Difference
+    # ========================================================
+
+    def calculate_rotation_difference(
+        self,
+        shape,
+        object_angle,
+        target_angle
+    ):
+        """
+        Calculate the minimum rotation required to align
+        the object with its corresponding target.
+
+        Object와 Target의 대칭성을 고려하여
+        필요한 최소 회전 각도를 계산한다.
+        """
+
+        symmetry = {
+            "circle": 360.0,
+            "square": 90.0,
+            "triangle": 120.0,
+            "star": 72.0,
+        }
+
+        # Circle orientation does not matter.
+        if shape == "circle":
+            return 0.0
+
+        # Unknown shape
+        if shape not in symmetry:
+            return None
+
+        # Angle information is not available.
+        if object_angle is None or target_angle is None:
+            return None
+
+        symmetry_angle = symmetry[shape]
+
+        # ====================================================
+        # Raw Rotation Difference
+        # ====================================================
+
+        delta = target_angle - object_angle
+
+        # ====================================================
+        # Apply Shape Symmetry
+        # ====================================================
+
+        delta = delta % symmetry_angle
+
+        # ====================================================
+        # Select Minimum Rotation
+        # ====================================================
+
+        if delta > symmetry_angle / 2.0:
+            delta -= symmetry_angle
+
+        return float(delta)
+
+    # ========================================================
+    # Get Matched Pair
+    # ========================================================
+
+    def get_matched_pair(self, shape):
+        """
+        Return object and target information for the
+        requested shape.
+
+        요청한 Shape에 해당하는 Object와 Target 정보를
+        반환한다.
+        """
+
+        if shape not in self.objects:
+            return None, None
+
+        if shape not in self.targets:
+            return None, None
+
+        return (
+            self.objects[shape],
+            self.targets[shape]
+        )
 
     # ========================================================
     # Test Run
@@ -300,26 +490,74 @@ class AssemblyController(Node):
 
     def test_run(
         self,
-        is_object_detected,
-        x,
-        y,
-        z
+        shape
     ):
+        """
+        Test pick-up using the detected object position.
 
-        if not is_object_detected:
+        현재는 Object 위치를 이용한 Pick-up 테스트용.
+        """
+
+        obj, target = self.get_matched_pair(shape)
+
+        if obj is None:
 
             self.get_logger().warning(
-                "Object is not detected."
+                f"{shape} object is not detected."
             )
 
             return
 
+        if target is None:
+
+            self.get_logger().warning(
+                f"{shape} target is not detected."
+            )
+
+            return
+
+        # ====================================================
+        # Rotation Difference
+        # ====================================================
+
+        delta_angle = self.calculate_rotation_difference(
+            shape,
+            obj["angle"],
+            target["angle"]
+        )
+
+        self.get_logger().info(
+            f"{shape} assembly information:"
+        )
+
+        self.get_logger().info(
+            f"Object: "
+            f"({obj['x']:.2f}, "
+            f"{obj['y']:.2f}, "
+            f"{obj['z']:.2f})"
+        )
+
+        self.get_logger().info(
+            f"Target: "
+            f"({target['x']:.2f}, "
+            f"{target['y']:.2f}, "
+            f"{target['z']:.2f})"
+        )
+
+        self.get_logger().info(
+            f"Required Rotation: "
+            f"{delta_angle:.2f} deg"
+        )
+
+        # ====================================================
+        # Pick Up
+        # ====================================================
 
         self.mu.pick_up(
             [
-                x,
-                y,
-                z,
+                obj["x"],
+                obj["y"],
+                obj["z"],
                 100.08,
                 179.98,
                 100.9
@@ -349,7 +587,8 @@ def main(args=None):
 
         node.destroy_node()
 
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 # ============================================================
@@ -357,5 +596,4 @@ def main(args=None):
 # ============================================================
 
 if __name__ == "__main__":
-
     main()
