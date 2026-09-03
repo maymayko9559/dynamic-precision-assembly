@@ -19,23 +19,81 @@
 # - Pixel 좌표를 Camera 좌표로 변환
 # - Camera 좌표를 Robot BASE 좌표로 변환
 # ============================================================
-import rclpy
-from rclpy.node import Node
-
-class CoordinateTransform(Node):
-
-    def __init__(self,node):
-        super().__init__('coordinate_transform')
-        self.node=node
-
-def main(args=None):
-    rclpy.init(args=args)
-    node=CoordinateTransform()
-    rclpy.spin(node)
 
 
-    node.destroy_node()
-    rclpy.shutdown()
+class CoordinateTransform:
 
-if __name__=='__main__':
-    main()
+    def __init__(self):
+        pass
+
+    # ========================================================
+    # Pixel -> Camera
+    # ========================================================
+
+
+    def pixel_to_camera(self, u, v, depth, intrinsics):
+        """
+        Convert color pixel + aligned depth
+        to camera 3D coordinates.
+
+        Parameters
+        ----------
+        u, v : int
+            Color image pixel coordinates.
+
+        depth : float
+            Raw aligned depth value.
+            Current RealSense stream uses 16UC1.
+
+        intrinsics : dict
+            Camera intrinsic parameters:
+            fx, fy, cx, cy
+
+        Returns
+        -------
+        tuple
+            (X, Y, Z) in camera coordinate system.
+        """
+
+        if depth <= 0:
+            return None
+
+        fx = intrinsics["fx"]
+        fy = intrinsics["fy"]
+        cx = intrinsics["cx"]
+        cy = intrinsics["cy"]
+
+        Z = float(depth)
+
+        X = (u - cx) * Z / fx
+        Y = (v - cy) * Z / fy
+
+        return (X, Y, Z)
+
+    
+    # ========================================================
+    # Camera -> Robot
+    # ========================================================
+
+    def camera_to_robot(self, camera_position):
+        """
+        Convert camera coordinates to Robot BASE coordinates.
+        """
+
+        # TODO:
+        # Camera-Robot calibration
+
+        return None
+
+    # ========================================================
+    # Pixel -> Robot
+    # ========================================================
+
+    def pixel_to_robot(self, pixel, depth=None):
+        """
+        Convert pixel coordinates directly to Robot BASE.
+        """
+
+        # TODO: Implement later
+
+        return None

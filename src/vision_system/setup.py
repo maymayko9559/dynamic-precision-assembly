@@ -13,6 +13,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*.launch.py'))),
+        (os.path.join('share', package_name, 'config'), glob(os.path.join('config', '*'))),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -27,10 +28,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'vision_manager = vision_system.visionmanager:main',
-            'coordinate_transform = vision_system.coordinate_transform:main',
-            'image_processing = vision_system.image_processing:main',
-            'shape_detector = vision_system.shape_detector:main',
+            'vision_manager = vision_system.vision_manager:main',
         ],
     },
 )
