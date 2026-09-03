@@ -28,8 +28,10 @@
 import rclpy
 from rclpy.node import Node
 from assembly_interfaces.msg import DetectedObject
-from robot_control.robot_init import RobotInit
+from dynamic_assembly_robot_control.robot_init import RobotInit
 from .motion_utils import MotionUtils
+from std_msgs.msg import Float64MultiArray
+
 ROBOT_ID = "dsr01"
 ROBOT_MODEL = "m0609"
 
@@ -51,11 +53,26 @@ class AssemblyController(Node):
 
         self.subscription = self.create_subscription(
             DetectedObject,
-            '/detected_object_topic',
+            '/vision/detected_object',
             self.listener_callback,
             10
         )
         self.get_logger().info('DetectedObject 구독 시작')
+
+        self.robot_pose_pub = self.create_publisher(Float64MultiArray, '/robot/current_pose', 10)
+        self.robot_pose_timer = self.create_timer(0.1, self.publish_robot_pose)
+
+    def publish_robot_pose(self):
+        robot_pose = self.robot_init.get_current_pose()
+
+        if robot_pose is None:
+            return
+
+        msg = Float64MultiArray()
+        msg.data = robot_pose
+
+        self.robot_pose_pub.publish(msg)
+        
     def listener_callback(self, msg: DetectedObject):
         """데이터가 들어올 때 호출되는 콜백 함수"""
         self.latest_x = msg.x

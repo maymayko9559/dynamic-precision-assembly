@@ -35,7 +35,6 @@ class RobotInit:
         self.node.get_logger().info(f"Moving Joint to: {target_posj}")
         movej(target_posj, vel=vel, acc=acc)
 
-
     # 절대좌표 movel_함수
     def move_linear_ABS(self, pos_target, vel=20, acc=20):
         from DSR_ROBOT2 import movel, posx, DR_MV_MOD_ABS
@@ -57,4 +56,15 @@ class RobotInit:
             set_stiffnessx
         )
         
-        
+    def get_current_pose(self):
+        """현재 로봇의 TCP pose를 가져옵니다. [x, y, z, rx, ry, rz]"""
+
+        from DSR_ROBOT2 import get_current_posx
+
+        try:
+            robot_pose = get_current_posx()[0]
+            return [ float(value) for value in robot_pose ]
+
+        except Exception as e:
+            self.node.get_logger().error(f"Failed to get current robot pose: {e}")
+            return None
