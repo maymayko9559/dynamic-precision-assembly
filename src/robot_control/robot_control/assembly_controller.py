@@ -36,9 +36,9 @@ ROBOT_MODEL = "m0609"
 
 class AssemblyController(Node):
 
-    def __init__(self,node):
+    def __init__(self):
         super().__init__('assembly_controller',namespace=ROBOT_ID)
-        self.node = node
+        #self.node = node
         # 1. 최신 비전 좌표를 저장할 변수
         self.latest_x = 0.0
         self.latest_y = 0.0
@@ -46,10 +46,11 @@ class AssemblyController(Node):
         self.type=""
         self.shape=""
         self.is_object_detected = False
-        self.mu = MotionUtils(self.node)
+        self.robot_init = RobotInit(self)
+        self.mu = MotionUtils(self.robot_init)
 
 
-        self.subscription = self.node.create_subscription(
+        self.subscription = self.create_subscription(
             DetectedObject,
             '/detected_object_topic',
             self.listener_callback,

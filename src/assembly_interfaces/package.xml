@@ -7,7 +7,7 @@
     Custom ROS2 interfaces for dynamic assembly system
   </description>
 
-  <maintainer email="">may</maintainer>
+  <maintainer email="maymayko9559@gmail.com">may</maintainer>
   <license>TODO</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
