@@ -1,5 +1,5 @@
 # ============================================================
-# detection_node.py
+# vision_manager.py
 # ============================================================
 # [EN]
 # Main ROS2 node for the Vision System.
@@ -48,6 +48,8 @@ ros2 run vision_system vision_manager \
 
 '''
 import rclpy
+import cv2
+import numpy as np
 
 from rclpy.node import Node
 from sensor_msgs.msg import Image
@@ -57,8 +59,11 @@ from .board_detector import BoardDetector
 from .object_detector import ObjectDetector
 from .target_detector import TargetDetector
 from .coordinate_transform import CoordinateTransform
+from assembly_interfaces.msg import DetectedObject
 
-import cv2
+
+
+
 
 class VisionManager(Node):
 
@@ -84,6 +89,7 @@ class VisionManager(Node):
         # =====================================================
         # Camera Subscriber
         # =====================================================
+
         self.declare_parameter("image_topic", "/image_raw")
 
         image_topic = self.get_parameter("image_topic").value
@@ -95,95 +101,220 @@ class VisionManager(Node):
             10
         )
 
+
+        # ====================================================
+        # Detected Object Publisher
+        # ====================================================
+
+        self.detection_pub = self.create_publisher(
+            DetectedObject,
+            "/vision/detected_object",
+            10
+        )
+
+        
         self.get_logger().info("Vision Manager started.")
+
+
+    def publish_detection(self, detection, position):
+        """
+        Publish detected object/target information.
+
+        detection:
+            {
+                "type": "object" or "target",
+                "shape": "circle", "star", ...
+            }
+
+        position:
+            Robot coordinate (x, y, z)
+        """
+
+        x, y, z = position
+
+        msg = DetectedObject()
+
+        msg.type = detection["type"]
+        msg.shape = detection["shape"]
+
+        msg.x = float(x)
+        msg.y = float(y)
+        msg.z = float(z)
+
+        self.detection_pub.publish(msg)
+
+
+    def process_targets(self, raw_frame, board_corners):
+
+        # =========================================================
+        # Extract Board ROI
+        # =========================================================
+
+        board_roi = self.board_detector.extract_board_roi(raw_frame, board_corners)
+
+        # =========================================================
+        # Detect Targets
+        # =========================================================
+
+        targets = self.target_detector.detect(board_roi)
+
+        # =========================================================
+        # Draw Targets
+        # =========================================================
+
+        for target in targets:
+            self.draw_detection(board_roi, target)
+
+        return board_roi
+
+    def process_objects(self, raw_frame, board_corners):
+
+        # =========================================================
+        # Create Pick ROI
+        # =========================================================
+
+        pick_roi = self.create_pick_roi(raw_frame, board_corners)
+
+        # =========================================================
+        # Detect Objects
+        # =========================================================
+
+        objects = self.object_detector.detect(pick_roi)
+
+        # =========================================================
+        # Draw Objects
+        # =========================================================
+
+        for obj in objects:
+            self.draw_detection(pick_roi, obj)
+
+        return pick_roi
+
+
+    def create_pick_roi(self, raw_frame, board_corners):
+
+        # =========================================================
+        # Create Pick ROI
+        # =========================================================
+
+        pick_roi = raw_frame.copy()
+
+        board_points = board_corners.astype(
+            np.int32
+        )
+
+        cv2.fillPoly(
+            pick_roi,
+            [board_points],
+            (0, 0, 0)
+        )
+
+        return pick_roi
+
+    def draw_detection(self, image, detection):
+
+        shape = detection["shape"]
+        center = detection["center"]
+        contour = detection["contour"]
+
+        # Draw contour
+        cv2.drawContours(
+            image,
+            [contour],
+            -1,
+            (0, 255, 0),
+            2
+        )
+
+        # Draw center
+        cv2.circle(
+            image,
+            center,
+            5,
+            (0, 0, 255),
+            -1
+        )
+
+        # Draw shape name
+        cv2.putText(
+            image,
+            shape,
+            (
+                center[0] + 10,
+                center[1]
+            ),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 0, 0),
+            2
+        )
 
     # =========================================================
     # Camera Callback
     # =========================================================
-
     def image_callback(self, msg):
-        """
-        Main vision processing flow.
-
-        Camera
-            -> Board Detection
-            -> ROI Separation
-            -> Object / Target Detection
-            -> Coordinate Transform
-            -> Publish
-        """
-
 
         try:
-        
-            # =====================================================
-            # ROS Image -> OpenCV Image
-            # =====================================================
 
-            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-
-
-            # =====================================================
-            # Aruco Board Detection
-            # =====================================================
-
-            corners, ids = self.board_detector.detect(frame)
-
-
-            # =====================================================
-            # Debug Drawing
-            # =====================================================
-
-            frame = self.board_detector.draw_board(
-                        frame,
-                        corners,
-                        ids
-                    )
-
-            # ====================================================
-            # Get Board Corners
-            # ====================================================
-
-            board_corners = (
-                self.board_detector.get_board_corners(
-                    corners,
-                    ids
-                )
+            frame = self.bridge.imgmsg_to_cv2(
+                msg,
+                desired_encoding="bgr8"
             )
 
-            # ====================================================
-            # Extract Board ROI
-            # ====================================================
-            
+            raw_frame = frame.copy()
+            debug_frame = frame.copy()
+
+            # =====================================================
+            # Board Detection
+            # =====================================================
+
+            corners, ids = self.board_detector.detect(
+                raw_frame
+            )
+
+            board_corners = self.board_detector.get_board_corners(
+                corners,
+                ids
+            )
+
+            debug_frame = self.board_detector.draw_board(
+                debug_frame,
+                corners,
+                ids
+            )
+
+            # =====================================================
+            # Board Found
+            # =====================================================
+
             if board_corners is not None:
-                frame = (
-                    self.board_detector.draw_board_boundary(
-                    frame,
+
+                debug_frame = self.board_detector.draw_board_boundary(
+                    debug_frame,
                     board_corners
-                    )
                 )
 
-                # Perspective transform to get the Board ROI
-                board_roi = (
-                    self.board_detector.extract_board_roi(
-                        frame,
-                        board_corners  
-                    )
+                # Target detection
+                board_roi = self.process_targets(
+                    raw_frame,
+                    board_corners
                 )
 
-                # =================================================
-                # Show Board ROI
-                # =================================================
+                # Object detection
+                pick_roi = self.process_objects(
+                    raw_frame,
+                    board_corners
+                )
 
                 cv2.imshow(
                     "Target Board ROI",
                     board_roi
                 )
 
-                self.get_logger().info(
-                    "Target Board detected.",
-                    throttle_duration_sec=1.0
-                )           
+                cv2.imshow(
+                    "Pick ROI",
+                    pick_roi
+                )
 
             else:
 
@@ -192,19 +323,22 @@ class VisionManager(Node):
                     throttle_duration_sec=1.0
                 )
 
+            # =====================================================
+            # Main Debug Window
+            # =====================================================
 
+            cv2.imshow(
+                "Vision Manager - Camera",
+                debug_frame
+            )
 
-            # Show camera image
-            cv2.imshow("Vision Manager - Camera", frame)
-
-            # Required for OpenCV window update
             cv2.waitKey(1)
 
         except Exception as e:
+
             self.get_logger().error(
                 f"Failed to process camera image: {e}"
             )
-
 
 # ============================================================
 # Main
