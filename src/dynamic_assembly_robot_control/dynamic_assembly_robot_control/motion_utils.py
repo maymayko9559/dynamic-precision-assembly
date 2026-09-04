@@ -110,6 +110,88 @@ class MotionUtils:
 
         self.ri.node.get_logger().info("도형 이동작업 완료")
         self.ri.node.get_logger().info("place_object 동작 시퀀스 성공")
+
+
+    def test_z_retry(
+        self,
+        insert_travel=60.0,   # 한 번에 내려볼 총 하강량(mm)
+        step=2.0,             # 1스텝 하강량(mm)
+        f_z_limit=8.0,        # z축 외력 임계값(N)
+        seated_travel=50.0,   # 이만큼 내려갔는데 힘 안 걸리면 "성공"으로 간주
+        retreat_z=50.0,       # 막혔을 때 떼는 높이(mm)
+        max_retries=3,
+        use_compliance=True,
+    ):
+        """
+        현재 TCP 위치에서 그냥 Z축으로 하강.
+        하강 중 z 외력이 f_z_limit 초과 + 아직 seated_travel 미만이면
+        => retreat_z 만큼 떼고 같은 자리에서 다시 하강 (max_retries 회).
+        pick_up 직후 물체를 든 상태로 호출해서 재시도 동작만 확인하는 용도.
+        """
+        from DSR_ROBOT2 import wait, get_tool_force, DR_BASE
+
+        if use_compliance:
+            from DSR_ROBOT2 import task_compliance_ctrl, release_compliance_ctrl
+
+        def z_force():
+            f = get_tool_force(DR_BASE)
+            if not isinstance(f, (list, tuple)) or len(f) < 6:
+                return None
+            return float(f[2])
+
+        for attempt in range(1, max_retries + 1):
+            self.ri.node.get_logger().info(
+                f"[TEST] 하강 시도 {attempt}/{max_retries}"
+            )
+
+            if use_compliance:
+                task_compliance_ctrl([2000, 2000, 500, 200, 200, 200])
+                wait(0.2)
+
+            fz0 = z_force() or 0.0
+            self.ri.node.get_logger().info(f"[TEST] 힘 기준값 fz0 = {fz0:.2f} N")
+
+            blocked = False
+            travelled = 0.0
+
+            while travelled < insert_travel:
+                self.ri.move_linear_REL([0, 0, -step, 0, 0, 0], vel=8, acc=8)
+                travelled += step
+
+                fz = z_force()
+                if fz is None:
+                    continue
+                ext = abs(fz - fz0)
+                self.ri.node.get_logger().info(
+                    f"[TEST] 하강 {travelled:.1f}mm | z 외력 {ext:.2f} N"
+                )
+
+                if ext > f_z_limit and travelled < seated_travel:
+                    self.ri.node.get_logger().warn(
+                        f"[TEST] z 외력 {ext:.2f}N 감지 → 떼고 재시도"
+                    )
+                    blocked = True
+                    break
+
+            if use_compliance:
+                release_compliance_ctrl()
+                wait(0.2)
+
+            if not blocked:
+                self.ri.node.get_logger().info(
+                    f"[TEST] {travelled:.1f}mm 하강 완료 (힘 안 걸림) → 성공 처리, 종료"
+                )
+                self.ri.move_linear_REL([0, 0, travelled, 0, 0, 0], vel=30, acc=30)
+                return True
+
+            # 막혔으면 떼고 같은 자리에서 다시
+            self.ri.move_linear_REL([0, 0, retreat_z, 0, 0, 0], vel=40, acc=40)
+            wait(0.5)
+
+        self.ri.node.get_logger().error(f"[TEST] {max_retries}회 모두 막힘 - 종료")
+        return False
+
+    
     # def test_move_linear_ABS(self,target_pose):
     #     self.target_pose=target_pose
     #     self.ri.node.get_logger().info("ABS무브L시작!!")
@@ -165,7 +247,8 @@ class MotionUtils:
         object = [254.34,159.40,94.48,44.38,179.84,44.53]#임시 좌표
         target = [367.37, 6.30, 215.33, 100.08, 179.98, 100.9]# 임시 좌표
         self.pick_up(object)
-        self.place_object(target)
+        self.test_z_retry()
+        # self.place_object(target)
         # self.async_pick_and_place_run(target, offset)
         
      # 절대좌표 홈위치 == posj([0,0,90,0,90,0])

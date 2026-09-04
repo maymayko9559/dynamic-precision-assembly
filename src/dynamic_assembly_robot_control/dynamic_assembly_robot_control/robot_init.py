@@ -286,3 +286,30 @@ class RobotInit:
         )
 
         return True
+
+    # ========================================================
+    # Get External Force on TCP  (BASE frame: [fx, fy, fz, tx, ty, tz])
+    # ========================================================
+
+    def get_tcp_force(self):
+        from DSR_ROBOT2 import get_tool_force, DR_BASE
+        f = get_tool_force(DR_BASE)
+        if not isinstance(f, (list, tuple)) or len(f) < 6:
+            return None
+        return [float(v) for v in f]
+
+    def get_z_force(self):
+        f = self.get_tcp_force()
+        return None if f is None else f[2]
+
+    # ========================================================
+    # Compliance (부드러운 삽입 / 판 바닥 충격 완화)
+    # ========================================================
+
+    def enable_soft_z(self, stx=(2000, 2000, 500, 200, 200, 200)):
+        from DSR_ROBOT2 import task_compliance_ctrl
+        task_compliance_ctrl(list(stx))
+
+    def disable_soft_z(self):
+        from DSR_ROBOT2 import release_compliance_ctrl
+        release_compliance_ctrl()
