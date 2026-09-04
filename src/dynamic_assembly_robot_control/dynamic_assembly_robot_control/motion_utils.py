@@ -75,47 +75,13 @@ class MotionUtils:
         self.ri.move_linear_REL([0.0,0.0,100,0.0,0.0,0.0],vel=30, acc=30)
         self.ri.node.get_logger().info('물체 들고 안전하게 위로 올리기!')
 
-    
-
-    def place_object(self, target_pose):
-        """
-        임의의 목표 좌표(place_pose)를 받아 접근 후 물체를 내려놓는 시나리오
-        """
-        self.target_pose = target_pose
-        self.ri.node.get_logger().info("Starting Place Motion Sequence...")
-
-        
-        
-
-        up_target_pose = [
-            self.target_pose[0],
-            self.target_pose[1],
-            self.target_pose[2]+30, # z축을 30mm 위로
-            self.target_pose[3],
-            self.target_pose[4],
-            self.target_pose[5]
-        ]
-
-        # 2. 목표 위치의 위로 이동
-        self.ri.move_linear_ABS(up_target_pose, vel=30, acc=30)
-
-        # 3. 목표위치에 집어넣기
-        self.ri.move_linear_REL([0, 0, -50, 0, 0, 0], vel=20, acc=20)
-
-        # 3. 그리퍼 열기 (물체 놓기)
-        self.ri.open_gripper()
-
-        # 4. 작업 완료 후 Home 위치로 복귀
-        self.ri.move_joint([0, 0, 90, 0, 90, 0], vel=30, acc=30)
-
-        self.ri.node.get_logger().info("도형 이동작업 완료")
-        self.ri.node.get_logger().info("place_object 동작 시퀀스 성공")
 
 
     def test_z_retry(
         self,
-        insert_travel=60.0,   # 한 번에 내려볼 총 하강량(mm)
-        step=2.0,             # 1스텝 하강량(mm)
+        target_pose,
+        insert_travel=40.0,   # 한 번에 내려볼 총 하강량(mm)
+        step=20.0,             # 1스텝 하강량(mm)
         f_z_limit=8.0,        # z축 외력 임계값(N)
         seated_travel=50.0,   # 이만큼 내려갔는데 힘 안 걸리면 "성공"으로 간주
         retreat_z=50.0,       # 막혔을 때 떼는 높이(mm)
@@ -132,12 +98,9 @@ class MotionUtils:
 
         if use_compliance:
             from DSR_ROBOT2 import task_compliance_ctrl, release_compliance_ctrl
+        self.ri.move_linear_ABS(target_pose, vel=30, acc=30)
 
-        def z_force():
-            f = get_tool_force(DR_BASE)
-            if not isinstance(f, (list, tuple)) or len(f) < 6:
-                return None
-            return float(f[2])
+          
 
         for attempt in range(1, max_retries + 1):
             self.ri.node.get_logger().info(
@@ -148,17 +111,17 @@ class MotionUtils:
                 task_compliance_ctrl([2000, 2000, 500, 200, 200, 200])
                 wait(0.2)
 
-            fz0 = z_force() or 0.0
+            fz0 = self.ri.get_z_force() or 0.0
             self.ri.node.get_logger().info(f"[TEST] 힘 기준값 fz0 = {fz0:.2f} N")
 
             blocked = False
             travelled = 0.0
 
             while travelled < insert_travel:
-                self.ri.move_linear_REL([0, 0, -step, 0, 0, 0], vel=8, acc=8)
+                self.ri.move_linear_REL([0, 0, -step, 0, 0, 0], vel=30, acc=30)
                 travelled += step
 
-                fz = z_force()
+                fz = self.ri.get_z_force()  
                 if fz is None:
                     continue
                 ext = abs(fz - fz0)
@@ -181,7 +144,9 @@ class MotionUtils:
                 self.ri.node.get_logger().info(
                     f"[TEST] {travelled:.1f}mm 하강 완료 (힘 안 걸림) → 성공 처리, 종료"
                 )
-                self.ri.move_linear_REL([0, 0, travelled, 0, 0, 0], vel=30, acc=30)
+                #self.ri.move_linear_REL([0, 0, travelled, 0, 0, 0], vel=50, acc=30)
+                self.ri.open_gripper()
+                self.ri.move_linear_ABS([363.80, -12.77, 396.74, 15.18, 179.83, 15.33], vel=20, acc=20)
                 return True
 
             # 막혔으면 떼고 같은 자리에서 다시
@@ -244,8 +209,9 @@ class MotionUtils:
 
     
     def run(self):
-        object = [254.34,159.40,94.48,44.38,179.84,44.53]#임시 좌표
+        object = []#임시 좌표
         target = [367.37, 6.30, 215.33, 100.08, 179.98, 100.9]# 임시 좌표
+    
         self.pick_up(object)
         self.test_z_retry()
         # self.place_object(target)

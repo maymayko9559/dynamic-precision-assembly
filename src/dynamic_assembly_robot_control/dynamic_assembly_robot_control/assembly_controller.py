@@ -53,6 +53,7 @@ from .motion_utils import MotionUtils
 # ============================================================
 
 ROBOT_ID = "dsr01"
+ROBOT_MODEL='m0609'
 
 
 # ============================================================
@@ -574,14 +575,19 @@ def main(args=None):
     rclpy.init(args=args)
 
     node = AssemblyController()
+    import DR_init
+    DR_init.__dsr__id = ROBOT_ID
+    DR_init.__dsr__model = ROBOT_MODEL
+    DR_init.__dsr__node = node
 
     try:
-
+        node.robot_init.move_linear_ABS([363.80, -12.77, 396.74, 15.18, 179.83, 15.33], vel=20, acc=20)
+        node.test_run(shape='Circle')
         rclpy.spin(node)
 
     except KeyboardInterrupt:
 
-        pass
+        node.get_logger().warn('강제종료')
 
     finally:
 

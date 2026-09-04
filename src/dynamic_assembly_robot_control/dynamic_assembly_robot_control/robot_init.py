@@ -223,21 +223,9 @@ class RobotInit:
         )
 
 
-    # ========================================================
-    # Start Compliance
-    # ========================================================
+    
 
-    def start_compliance(self):
-
-        from DSR_ROBOT2 import (
-            task_compliance_ctrl,
-            set_stiffnessx
-        )
-
-        # TODO:
-        # Compliance control parameters will be implemented
-        # when insertion control is added.
-        pass
+    
 
 
     # ========================================================
