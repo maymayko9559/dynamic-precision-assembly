@@ -68,7 +68,7 @@ class MotionUtils:
         self.ri.node.get_logger().info('물체 위 위치로 이동완료!')
         wait(1.0)
         self.ri.node.get_logger().info('물체 잡으러 하강중...')
-        self.ri.move_linear_REL([0.0,0.0,-150,0.0,0.0,0.0],vel=30, acc=30)
+        self.ri.move_linear_REL([0.0,0.0,-95,0.0,0.0,0.0],vel=30, acc=30)
         self.ri.node.get_logger().info('물체 위치로 하강 완료!')
         self.ri.close_gripper()
         self.ri.node.get_logger().info('물체 잡기 완료!!')
@@ -162,8 +162,8 @@ class MotionUtils:
 
     
     def run(self):
-        object = [367.37, 6.30, 215.33, 100.08, 179.98, 100.9]#임시 좌표
-        target = [32,-451.23,132.96,109.07,-177.17,-161.06]# 임시 좌표
+        object = [254.34,159.40,94.48,44.38,179.84,44.53]#임시 좌표
+        target = [367.37, 6.30, 215.33, 100.08, 179.98, 100.9]# 임시 좌표
         self.pick_up(object)
         self.place_object(target)
         # self.async_pick_and_place_run(target, offset)
