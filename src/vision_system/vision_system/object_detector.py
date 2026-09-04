@@ -30,6 +30,7 @@ from .image_processing import (
 from .shape_detector import (
     classify_shape,
     calculate_center,
+    calculate_orientation,
 )
 
 
@@ -123,6 +124,14 @@ class ObjectDetector:
             if center is None:
                 continue
 
+            # ------------------------------------------------
+            # 3-4. Calculate Orientation
+            # ------------------------------------------------
+
+            angle = calculate_orientation(contour)
+
+            if angle is None:
+                continue
             # =================================================
             # Detection Result
             # =================================================
@@ -131,6 +140,7 @@ class ObjectDetector:
                 "type": "object",
                 "shape": shape,
                 "center": center,
+                "angle": angle,
                 "area": area,
                 "contour": contour
             }   

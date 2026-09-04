@@ -16,6 +16,67 @@ import cv2
 import numpy as np
 
 
+
+# ============================================================
+# Calculate Orientation
+# ============================================================
+
+def calculate_orientation(contour):
+    """
+    Calculate the orientation angle of a contour.
+
+    Contour의 회전 각도를 계산한다.
+
+    Returns:
+        angle: rotation angle in degrees
+    """
+
+    if contour is None or len(contour) < 3:
+        return None
+
+    rect = cv2.minAreaRect(contour)
+
+    (_, _), (width, height), angle = rect
+
+    if width == 0 or height == 0:
+        return None
+
+    # Normalize angle based on the longer side.
+    if width < height:
+        angle += 90.0
+
+    # Normalize to [0, 180)
+    angle = angle % 180.0
+
+    return float(angle)
+
+
+# ============================================================
+# Get rotation difference
+# ============================================================
+def get_rotation_difference(shape, object_angle, target_angle):
+
+    symmetry = {
+        "circle": 360.0,
+        "square": 90.0,
+        "triangle": 120.0,
+        "star": 72.0,
+    }
+
+    # Circle orientation does not matter.
+    if shape == "circle":
+        return 0.0
+
+    symmetry_angle = symmetry[shape]
+
+    delta = target_angle - object_angle
+    delta = delta % symmetry_angle
+
+    if delta > symmetry_angle / 2:
+        delta -= symmetry_angle
+
+    return delta
+
 # ============================================================
 # Calculate Center
 # ============================================================

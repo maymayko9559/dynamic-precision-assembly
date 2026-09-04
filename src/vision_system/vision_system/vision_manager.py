@@ -71,6 +71,9 @@ from .target_detector import TargetDetector
 from .coordinate_transform import CoordinateTransform
 from assembly_interfaces.msg import DetectedObject
 
+from std_msgs.msg import Float64MultiArray
+from rclpy.qos import qos_profile_sensor_data
+
 
 
 
@@ -111,17 +114,35 @@ class VisionManager(Node):
         #     10
         # )
 
+        self.current_robot_pose = None
+
+        self.robot_pose_sub = self.create_subscription(
+            Float64MultiArray,
+            '/robot/current_pose',
+            self.robot_pose_callback,
+            10
+        )
         # ============================================================
         # Camera Topics
         # ============================================================
 
-        self.declare_parameter("color_topic", "/camera/camera/color/image_raw")
+        self.declare_parameter(
+            "color_topic",
+            "/camera/color/image_raw"
+        )
 
-        self.declare_parameter("depth_topic", "/camera/camera/aligned_depth_to_color/image_raw")
+        self.declare_parameter(
+            "depth_topic",
+            "/camera/aligned_depth_to_color/image_raw"
+        )
 
-        color_topic = self.get_parameter("color_topic").value
+        color_topic = self.get_parameter(
+            "color_topic"
+        ).value
 
-        depth_topic = self.get_parameter("depth_topic").value
+        depth_topic = self.get_parameter(
+            "depth_topic"
+        ).value
 
 
         # ============================================================
@@ -130,7 +151,7 @@ class VisionManager(Node):
 
         self.declare_parameter(
             "camera_info_topic",
-            "/camera/camera/aligned_depth_to_color/camera_info"
+            "/camera/aligned_depth_to_color/camera_info"
         )
 
         camera_info_topic = self.get_parameter(
@@ -143,7 +164,7 @@ class VisionManager(Node):
             CameraInfo,
             camera_info_topic,
             self.camera_info_callback,
-            10
+            qos_profile_sensor_data
         )
         # ============================================================
         # Color Image Subscriber
@@ -153,7 +174,7 @@ class VisionManager(Node):
             Image,
             color_topic,
             self.color_callback,
-            10
+            qos_profile_sensor_data
         )
 
         # ============================================================
@@ -164,7 +185,7 @@ class VisionManager(Node):
             Image,
             depth_topic,
             self.depth_callback,
-            10
+            qos_profile_sensor_data
         )
 
         self.latest_depth_frame = None
@@ -181,6 +202,14 @@ class VisionManager(Node):
 
         
         self.get_logger().info("Vision Manager started.")
+
+
+    def robot_pose_callback(self, msg):
+
+        if len(msg.data) != 6:
+            return
+
+        self.current_robot_pose = list(msg.data)
 
     def camera_info_callback(self, msg):
 
@@ -232,6 +261,8 @@ class VisionManager(Node):
         msg.x = float(x)
         msg.y = float(y)
         msg.z = float(z)
+
+        msg.angle = detection["angle"]
 
         self.detection_pub.publish(msg)
 
@@ -368,10 +399,8 @@ class VisionManager(Node):
 
         for target in targets:
 
-            # Board ROI pixel
             board_center = target["center"]
 
-            # Board ROI pixel -> Camera pixel
             camera_center = (
                 self.board_detector.board_to_camera_pixel(
                     board_center,
@@ -381,7 +410,6 @@ class VisionManager(Node):
 
             u, v = camera_center
 
-            # Draw position on original camera image
             cv2.circle(
                 debug_frame,
                 camera_center,
@@ -390,17 +418,85 @@ class VisionManager(Node):
                 -1
             )
 
-            # Camera pixel + Depth -> Camera XYZ
+            # TEST
+            self.get_logger().info(
+                f'{target["shape"]}: '
+                f'board={board_center}, '
+                f'pixel=({u}, {v})'
+            )
+
+            camera_position = self.get_camera_position(u, v)
+
+
+
+            if camera_position is None:
+                self.get_logger().warning(
+                    f'{target["shape"]}: camera position is None'
+                )
+                continue
+
+            robot_pose = self.current_robot_pose
+
+            if robot_pose is None:
+                return
+
+            T_base2gripper = (
+                self.coordinate_transform.get_robot_pose_matrix(
+                    *robot_pose
+                )
+            )
+
+            robot_position = (
+                self.coordinate_transform.camera_to_robot(
+                    camera_position,
+                    T_base2gripper
+                )
+            )
+
+            self.get_logger().info(
+                f'{target["shape"]}: '
+                f'camera_xyz={camera_position}, '
+                f'robot_xyz={robot_position}'
+            )
+
+            self.publish_detection(target, robot_position)
+
+    def process_object_positions(self, objects):
+
+        for obj in objects:
+
+            u, v = obj["center"]
+
             camera_position = self.get_camera_position(u, v)
 
             if camera_position is None:
                 continue
 
+            if self.current_robot_pose is None:
+                return
+
+            T_base2gripper = (
+                self.coordinate_transform.get_robot_pose_matrix(
+                    *self.current_robot_pose
+                )
+            )
+
+            robot_position = (
+                self.coordinate_transform.camera_to_robot(
+                    camera_position,
+                    T_base2gripper
+                )
+            )
+
             self.get_logger().info(
-                f'{target["shape"]}: '
-                f'board={board_center}, '
-                f'pixel=({u}, {v}), '
-                f'camera_xyz={camera_position}'
+                f'{obj["shape"]}: '
+                f'camera_xyz={camera_position}, '
+                f'robot_xyz={robot_position}'
+            )
+
+            self.publish_detection(
+                obj,
+                robot_position
             )
 
     def get_camera_position(self, u, v):
@@ -408,19 +504,38 @@ class VisionManager(Node):
         h, w = self.latest_depth_frame.shape[:2]
 
         if not (0 <= u < w and 0 <= v < h):
+            self.get_logger().warning(
+                f"Pixel out of range: ({u}, {v})"
+            )
             return None
 
         depth = self.latest_depth_frame[v, u]
 
+        self.get_logger().info(
+            f"pixel=({u}, {v}), depth={depth}"
+        )
+
         if depth <= 0:
+            self.get_logger().warning(
+                f"Invalid depth: {depth}"
+            )
             return None
 
-        return self.coordinate_transform.pixel_to_camera(
+        camera_position = self.coordinate_transform.pixel_to_camera(
             u,
             v,
             depth,
             self.camera_intrinsics
         )
+            
+        self.get_logger().info(
+            f"Pixel -> Camera: "
+            f"pixel=({u}, {v}), "
+            f"depth={depth}, "
+            f"camera_xyz={camera_position}"
+        )
+
+        return camera_position
 
     def show_windows(self, debug_frame, board_roi, pick_roi):
 
@@ -464,13 +579,12 @@ class VisionManager(Node):
 
             board_roi, targets = self.process_targets(raw_frame, board_corners)
 
-            self.process_target_positions(
-                targets,
-                board_corners,
-                debug_frame
-            )
+            self.process_target_positions(targets, board_corners, debug_frame)
 
             pick_roi, objects = self.process_objects(raw_frame, board_corners)
+
+
+            self.process_object_positions(objects)
 
             self.show_windows(
                 debug_frame,
@@ -500,9 +614,13 @@ def main(args=None):
         pass
 
     finally:
+
         cv2.destroyAllWindows()
+
         node.destroy_node()
-        rclpy.shutdown()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

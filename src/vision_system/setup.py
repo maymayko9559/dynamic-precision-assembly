@@ -15,7 +15,7 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*.launch.py'))),
         (os.path.join('share', package_name, 'config'), glob(os.path.join('config', '*'))),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'scipy', 'numpy'],
     zip_safe=True,
     maintainer='may',
     maintainer_email='maymayko9559@gmail.com',

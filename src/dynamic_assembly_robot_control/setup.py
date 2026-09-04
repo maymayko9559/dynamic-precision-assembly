@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 import os
 from glob import glob  
 
-package_name = 'robot_control'
+package_name = 'dynamic_assembly_robot_control'
 
 setup(
     name=package_name,
@@ -27,11 +27,11 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'assembly_controller = robot_control.assembly_controller:main',
-            'insertion_controller = robot_control.insertion_controller:main',
-            'motion_planner = robot_control.motion_planner:main',
-            'target_manager = robot_control.target_manager:main',
-            'motion_utils = robot_control.motion_utils:main',
+            'assembly_controller = dynamic_assembly_robot_control.assembly_controller:main',
+            'insertion_controller = dynamic_assembly_robot_control.insertion_controller:main',
+            'motion_planner = dynamic_assembly_robot_control.motion_planner:main',
+            'target_manager = dynamic_assembly_robot_control.target_manager:main',
+            'motion_utils = dynamic_assembly_robot_control.motion_utils:main',
         ],
     },
 )
