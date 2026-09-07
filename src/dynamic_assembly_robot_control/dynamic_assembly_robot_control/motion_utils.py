@@ -37,45 +37,145 @@ class MotionUtils:
         super().__init__()
         self.ri = robot_init_instance
     
+    def pick_up(
+        self,
+        object_pose,
+        approach_height=80.0,
+        pick_offset=0.0,
+        lift_height=100.0,
+    ):
 
-    def pick_up(self, object_pose):
-        from DSR_ROBOT2 import movej, posj,wait
         """
-        임의의 목표 좌표(target_pose)를 받아 접근 후 물체를 집어 올리는 시나리오
-        """
-        self.object_pose = object_pose
-        self.ri.node.get_logger().info("pick_up 동작 시퀀스 시작")
+        object_pose:
+            [x, y, z, rx, ry, rz]
 
-        # 1. 시작 전 그리퍼 확실히 열어두기
-        self.ri.close_gripper()
+        z는 Vision에서 얻은 object 기준 좌표.
+        pick_offset은 실제 gripper TCP 보정 후 설정한다.
+        """
+
+        from DSR_ROBOT2 import wait
+
+        x, y, z, rx, ry, rz = object_pose
+
+        approach_pose = [
+            x,
+            y,
+            z + approach_height,
+            rx,
+            ry,
+            rz,
+        ]
+
+        pick_pose = [
+            x,
+            y,
+            z + pick_offset,
+            rx,
+            ry,
+            rz,
+        ]
+
+        lift_pose = [
+            x,
+            y,
+            z + lift_height,
+            rx,
+            ry,
+            rz,
+        ]
+
+        self.ri.node.get_logger().info(
+            f"[PICK] approach={approach_pose}"
+        )
+
+        # 1. Gripper open
         self.ri.open_gripper()
 
-        # 2. 작업 준비 위치(Home 또는 Ready Pose)로 관절 이동 (예시 관절 각도)
-        self.ri.node.get_logger().info("시작지점 가기 전")
-        self.ri.move_joint([0,0,90,0,90,0],vel=30, acc=30)
-        # self.ri.move_joint([0,0,50,0,90,0], vel=30, acc=30)
-        self.ri.node.get_logger().info("시작지점 갔다")
-        up_object=[
-            self.object_pose[0],
-            self.object_pose[1],
-            self.object_pose[2],
-            self.object_pose[3],
-            self.object_pose[4],
-            self.object_pose[5]
-        ]
-        self.ri.node.get_logger().info('물체 위 위치로 이동중...')
-        self.ri.move_linear_ABS(up_object, vel=30, acc=30)
-        self.ri.node.get_logger().info('물체 위 위치로 이동완료!')
-        wait(1.0)
-        self.ri.node.get_logger().info('물체 잡으러 하강중...')
-        self.ri.move_linear_REL([0.0,0.0,-95,0.0,0.0,0.0],vel=30, acc=30)
-        self.ri.node.get_logger().info('물체 위치로 하강 완료!')
-        self.ri.close_gripper()
-        self.ri.node.get_logger().info('물체 잡기 완료!!')
-        self.ri.move_linear_REL([0.0,0.0,100,0.0,0.0,0.0],vel=30, acc=30)
-        self.ri.node.get_logger().info('물체 들고 안전하게 위로 올리기!')
-        self.ri.move_linear_ABS([363.80, -12.77, 396.74, 15.18, 179.83, 15.33], vel=20, acc=20)
+        # 2. Object 위로 이동
+        self.ri.move_linear_ABS(
+            approach_pose,
+            vel=20,
+            acc=20
+        )
 
+        wait(0.5)
+
+        # 3. 천천히 하강
+        self.ri.move_linear_ABS(
+            pick_pose,
+            vel=10,
+            acc=10
+        )
+
+        wait(0.3)
+
+        # 4. Grip
+        self.ri.close_gripper()
+
+        wait(0.5)
+
+        # 5. Lift
+        self.ri.move_linear_ABS(
+            lift_pose,
+            vel=20,
+            acc=20
+        )
+
+        self.ri.node.get_logger().info(
+            "[PICK] Pick-up completed."
+        )
+
+    # ========================================================
+    # Move Above Target
+    # ========================================================
+
+    def move_above_target(
+        self,
+        target_pose,
+        approach_height=100.0,
+        vel=20,
+        acc=20,
+    ):
+        """
+        Move to a safe position above the detected target.
+
+        target_pose:
+            [x, y, z, rx, ry, rz]
+
+        approach_height:
+            Target보다 위에서 정지할 높이 [mm]
+        """
+
+        x, y, z, rx, ry, rz = target_pose
+
+        approach_pose = [
+            x,
+            y,
+            z + approach_height,
+            rx,
+            ry,
+            rz,
+        ]
+
+        self.ri.node.get_logger().info(
+            f"[TARGET APPROACH] target={target_pose}"
+        )
+
+        self.ri.node.get_logger().info(
+            f"[TARGET APPROACH] approach={approach_pose}"
+        )
+
+        self.ri.move_linear_ABS(
+            approach_pose,
+            vel=vel,
+            acc=acc,
+        )
+
+        self.ri.node.get_logger().info(
+            "[TARGET APPROACH] Reached target approach position."
+        )
+
+        return approach_pose
 
     def test_z_retry(
         self,

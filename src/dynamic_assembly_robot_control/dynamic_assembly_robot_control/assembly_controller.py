@@ -49,6 +49,8 @@ from assembly_interfaces.msg import DetectedObject
 from .robot_init import RobotInit
 from .motion_utils import MotionUtils
 
+from sensor_msgs.msg import JointState
+
 
 # ============================================================
 # Robot Configuration
@@ -56,6 +58,18 @@ from .motion_utils import MotionUtils
 
 ROBOT_ID = "dsr01"
 ROBOT_MODEL='m0609'
+
+# ============================================================
+# Temporary Vision-to-Robot Calibration Offsets
+# ============================================================
+
+OBJECT_X_OFFSET = 7.0
+OBJECT_Y_OFFSET = 0.0
+OBJECT_Z_OFFSET = -40.0
+
+TARGET_X_OFFSET = -20.0
+TARGET_Y_OFFSET = -5.0
+TARGET_Z_OFFSET = 0.0
 
 
 # ============================================================
@@ -104,6 +118,19 @@ class AssemblyController(Node):
         # ====================================================
 
         self.targets = {}
+
+        # ====================================================
+        # Current Joint State
+        # ====================================================
+
+        self.current_joint_positions = None
+
+        self.joint_state_sub = self.create_subscription(
+            JointState,
+            "/dsr01/joint_states",
+            self.joint_state_callback,
+            10
+        )
 
         # ====================================================
         # Robot Initialization
@@ -298,7 +325,7 @@ class AssemblyController(Node):
         # Object
         # ====================================================
 
-        if msg.type == "object" and msg.shape == "circle":
+        if msg.type == "object":
 
             self.objects[msg.shape] = {
                 "x": msg.x,
@@ -319,8 +346,7 @@ class AssemblyController(Node):
         # ====================================================
         # Target
         # ====================================================
-
-        elif msg.type == "target" and msg.shape == "circle":
+        elif msg.type == "target":
 
             self.targets[msg.shape] = {
                 "x": msg.x,
@@ -339,12 +365,12 @@ class AssemblyController(Node):
             )
 
         else:
-
             self.get_logger().warning(
                 f"Unknown detection type: {msg.type}"
             )
-
             return
+
+
 
         # ====================================================
         # Check Object / Target Match
@@ -558,33 +584,91 @@ class AssemblyController(Node):
         # ====================================================
         # Pick Up
         # ====================================================
+        object_pose = [
+            obj["x"] + OBJECT_X_OFFSET,
+            obj["y"] + OBJECT_Y_OFFSET,
+            obj["z"] + OBJECT_Z_OFFSET,
+            100.08,
+            179.98,
+            100.9,
+        ]
 
         self.mu.pick_up(
-            [
-                obj["x"] + 3.0,
-                obj["y"] - 15.0,
-                obj["z"] +55,
-                100.08,
-                179.98,
-                100.9
-            ]
+            object_pose,
+            pick_offset=0.0,
         )
 
-        self.mu.test_z_retry(
-            [
-                target["x"],
-                target["y"],
-                target["z"]+70,
-                100.08,
-                179.98,
-                100.9
-            ]
+        # self.mu.test_z_retry(
+        #     [
+        #         target["x"],
+        #         target["y"],
+        #         target["z"]+70,
+        #         100.08,
+        #         179.98,
+        #         100.9
+        #     ]
+        # )
+
+        target_pose = [
+            target["x"] + TARGET_X_OFFSET,
+            target["y"] + TARGET_Y_OFFSET,
+            target["z"] + TARGET_Z_OFFSET,
+            100.08,
+            179.98,
+            100.9,
+        ]
+
+        self.mu.move_above_target(
+            target_pose,
+            approach_height=100.0,
         )
+
+        rclpy.spin_once(self, timeout_sec=0.1)
+
         self.get_logger().info(
             f"Pick-up completed for {shape}."
         )
 
 
+        if self.current_joint_positions is None:
+            self.get_logger().warning(
+                "[ROTATE TEST] Joint state not received."
+            )
+            return
+
+        self.robot_init.rotate_wrist(
+            self.current_joint_positions,
+            delta_angle=delta_angle
+        )
+
+        self.get_logger().info(
+            f"[ROTATE] "
+            f"Object Angle: {obj['angle']:.2f} deg | "
+            f"Target Angle: {target['angle']:.2f} deg | "
+            f"Delta: {delta_angle:.2f} deg"
+        )
+
+        self.get_logger().info(
+            "[TEST] Rotation test finished. Stop before insertion."
+        )
+
+        return
+
+
+    # ========================================================
+    # Joint State Callback
+    # ========================================================
+
+    def joint_state_callback(self, msg: JointState):
+
+        if len(msg.position) < 6:
+            return
+
+        # joint_states: rad -> Doosan posj: degree
+        self.current_joint_positions = [
+            float(p) * 180.0 / 3.141592653589793
+            for p in msg.position[:6]
+        ]
 # ============================================================
 # Main
 # ============================================================
@@ -604,7 +688,7 @@ def main(args=None):
     try:
         rclpy.spin_once(node)
 
-        shape = "circle"
+        shape = "square"
         node.get_logger().info(f"{shape} object/target 검출 대기 중...")
 
         # 비전 콜백이 self.objects/self.targets를 채울 때까지 spin
