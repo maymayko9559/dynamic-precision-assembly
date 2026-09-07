@@ -555,48 +555,245 @@ class VisionManager(Node):
 
         cv2.waitKey(1)
 
-
     def color_callback(self, msg):
+
         try:
-            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+
+            # ====================================================
+            # ROS Image -> OpenCV
+            # ====================================================
+
+            frame = self.bridge.imgmsg_to_cv2(
+                msg,
+                desired_encoding="bgr8"
+            )
 
             raw_frame = frame.copy()
             debug_frame = frame.copy()
 
+
+            # ====================================================
+            # Camera Ready Check
+            # ====================================================
+
             if not self.is_camera_ready():
                 return
 
-            board_corners, debug_frame = self.detect_board(raw_frame, debug_frame)
+
+            # ====================================================
+            # Detect ArUco Board / Box
+            # ====================================================
+
+            board_corners, debug_frame = self.detect_board(
+                raw_frame,
+                debug_frame
+            )
+
+
+            # ====================================================
+            # Board Not Detected
+            # ====================================================
 
             if board_corners is None:
+
                 self.get_logger().info(
                     "Waiting for ArUco IDs 0, 1, 2, 3...",
                     throttle_duration_sec=1.0
                 )
 
+                # 중요:
+                # target=(0,0,0) 같은 잘못된 값을 publish하지 않는다.
+                #
+                # Robot Control의 TargetManager가
+                # 마지막 정상 target을 유지하도록 한다.
+
                 self.show_debug(debug_frame)
+
                 return
 
-            board_roi, targets = self.process_targets(raw_frame, board_corners)
 
-            self.process_target_positions(targets, board_corners, debug_frame)
+            # ====================================================
+            # NEW: Box Center -> Target
+            # ====================================================
 
-            pick_roi, objects = self.process_objects(raw_frame, board_corners)
+            self.process_box_target(
+                board_corners,
+                debug_frame
+            )
 
 
-            self.process_object_positions(objects)
+            # ====================================================
+            # Object Detection
+            # ====================================================
 
-            self.show_windows(
-                debug_frame,
-                board_roi,
+            pick_roi, objects = self.process_objects(
+                raw_frame,
+                board_corners
+            )
+
+            self.process_object_positions(
+                objects
+            )
+
+
+            # ====================================================
+            # Debug Window
+            # ====================================================
+
+            cv2.imshow(
+                "Pick ROI",
                 pick_roi
             )
 
+            self.show_debug(
+                debug_frame
+            )
+
+
         except Exception as e:
+
             self.get_logger().error(
                 f"Failed to process camera image: {e}"
             )
 
+    # ============================================================
+    # Process Box Center Target
+    # ============================================================
+
+    def process_box_target(self, board_corners, debug_frame):
+
+        if board_corners is None:
+            return
+
+        # ========================================================
+        # 1. Calculate Box Center Pixel
+        # ========================================================
+        #
+        # board_corners:
+        # [
+        #     [x0, y0],
+        #     [x1, y1],
+        #     [x2, y2],
+        #     [x3, y3]
+        # ]
+        #
+        # 네 개 corner의 평균 = box center
+        # ========================================================
+
+        corners = np.asarray(
+            board_corners,
+            dtype=np.float32
+        ).reshape(-1, 2)
+
+        if len(corners) != 4:
+            self.get_logger().warning(
+                f"[BOX TARGET] Invalid board corners: {len(corners)}"
+            )
+            return
+
+        center = np.mean(
+            corners,
+            axis=0
+        )
+
+        u = int(round(center[0]))
+        v = int(round(center[1]))
+
+
+        # ========================================================
+        # 2. Draw Box Target Center
+        # ========================================================
+
+        cv2.circle(
+            debug_frame,
+            (u, v),
+            10,
+            (0, 0, 255),
+            -1
+        )
+
+        cv2.putText(
+            debug_frame,
+            "BOX TARGET",
+            (u + 15, v),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 0, 255),
+            2
+        )
+
+
+        # ========================================================
+        # 3. Pixel -> Camera Coordinate
+        # ========================================================
+
+        camera_position = self.get_camera_position(
+            u,
+            v
+        )
+
+        if camera_position is None:
+            self.get_logger().warning(
+                "[BOX TARGET] Camera position unavailable."
+            )
+            return
+
+
+        # ========================================================
+        # 4. Camera -> Robot BASE Coordinate
+        # ========================================================
+
+        if self.current_robot_pose is None:
+            self.get_logger().warning(
+                "[BOX TARGET] Robot pose unavailable."
+            )
+            return
+
+        T_base2gripper = (
+            self.coordinate_transform.get_robot_pose_matrix(
+                *self.current_robot_pose
+            )
+        )
+
+        robot_position = (
+            self.coordinate_transform.camera_to_robot(
+                camera_position,
+                T_base2gripper
+            )
+        )
+
+
+        # ========================================================
+        # 5. Create Target Detection
+        # ========================================================
+        #
+        # shape는 지금 제어에는 사용하지 않지만
+        # future use를 위해 field 자체는 유지.
+        # ========================================================
+
+        target = {
+            "type": "target",
+            "shape": "box",
+            "center": (u, v),
+            "angle": 0.0,
+        }
+
+
+        # ========================================================
+        # 6. Publish
+        # ========================================================
+
+        self.publish_detection(
+            target,
+            robot_position
+        )
+
+        self.get_logger().info(
+            f"[BOX TARGET] "
+            f"pixel=({u}, {v}), "
+            f"camera_xyz={camera_position}, "
+            f"robot_xyz={robot_position}"
+        )
 # ============================================================
 # Main
 # ============================================================
