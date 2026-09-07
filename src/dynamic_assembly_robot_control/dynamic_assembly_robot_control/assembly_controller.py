@@ -37,6 +37,8 @@
 # ============================================================
 
 
+from platform import node
+
 import rclpy
 
 from rclpy.node import Node
@@ -53,6 +55,7 @@ from .motion_utils import MotionUtils
 # ============================================================
 
 ROBOT_ID = "dsr01"
+ROBOT_MODEL='m0609'
 
 
 # ============================================================
@@ -295,7 +298,7 @@ class AssemblyController(Node):
         # Object
         # ====================================================
 
-        if msg.type == "object":
+        if msg.type == "object" and msg.shape == "circle":
 
             self.objects[msg.shape] = {
                 "x": msg.x,
@@ -317,7 +320,7 @@ class AssemblyController(Node):
         # Target
         # ====================================================
 
-        elif msg.type == "target":
+        elif msg.type == "target" and msg.shape == "circle":
 
             self.targets[msg.shape] = {
                 "x": msg.x,
@@ -483,23 +486,22 @@ class AssemblyController(Node):
             self.objects[shape],
             self.targets[shape]
         )
-
+    
+    
     # ========================================================
     # Test Run
     # ========================================================
 
-    def test_run(
-        self,
-        shape
-    ):
+    def test_run(self, shape):
         """
         Test pick-up using the detected object position.
 
         현재는 Object 위치를 이용한 Pick-up 테스트용.
+
+        
         """
 
         obj, target = self.get_matched_pair(shape)
-
         if obj is None:
 
             self.get_logger().warning(
@@ -515,6 +517,10 @@ class AssemblyController(Node):
             )
 
             return
+        
+        self.get_logger().info(
+            f"[CHECK] target z={target['z']:.2f} (실측 127.5mm)"
+        )
 
         # ====================================================
         # Rotation Difference
@@ -555,13 +561,27 @@ class AssemblyController(Node):
 
         self.mu.pick_up(
             [
-                obj["x"],
-                obj["y"],
-                obj["z"],
+                obj["x"] + 3.0,
+                obj["y"] - 15.0,
+                obj["z"] +55,
                 100.08,
                 179.98,
                 100.9
             ]
+        )
+
+        self.mu.test_z_retry(
+            [
+                target["x"],
+                target["y"],
+                target["z"]+70,
+                100.08,
+                179.98,
+                100.9
+            ]
+        )
+        self.get_logger().info(
+            f"Pick-up completed for {shape}."
         )
 
 
@@ -574,14 +594,34 @@ def main(args=None):
     rclpy.init(args=args)
 
     node = AssemblyController()
+    import DR_init
+    DR_init.__dsr__id = ROBOT_ID
+    DR_init.__dsr__model = ROBOT_MODEL
+    DR_init.__dsr__node = node
 
+    node.robot_init.move_linear_ABS([363.80, -12.77, 396.74, 15.18, 179.83, 15.33], vel=20, acc=20)
+    node.robot_init.open_gripper()
     try:
+        rclpy.spin_once(node)
+
+        shape = "circle"
+        node.get_logger().info(f"{shape} object/target 검출 대기 중...")
+
+        # 비전 콜백이 self.objects/self.targets를 채울 때까지 spin
+        while rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=0.1)
+            obj, target = node.get_matched_pair(shape)
+            if obj is not None and target is not None:
+                break
+
+        node.test_run(shape)   # 저장된 좌표를 꺼내 pick_up 수행
 
         rclpy.spin(node)
 
+
     except KeyboardInterrupt:
 
-        pass
+        node.get_logger().warn('강제종료')
 
     finally:
 
