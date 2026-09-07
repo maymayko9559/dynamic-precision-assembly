@@ -120,7 +120,7 @@ def classify_shape(contour):
 
     area = cv2.contourArea(contour)
 
-    if area < 500:
+    if area < 1000:
         return "unknown"
 
     perimeter = cv2.arcLength(
@@ -174,53 +174,181 @@ def classify_shape(contour):
 
     solidity = area / hull_area
 
-    # print(
-    #     f"vertices={vertices}, "
-    #     f"circularity={circularity:.2f}, "
-    #     f"solidity={solidity:.2f}"
-    # )
-
-    # =====================================================
-    # Triangle
-    # =====================================================
-
-    if vertices == 3:
-
-        if (
-            circularity > 0.45
-            and solidity > 0.85
-        ):
-            return "triangle"
-
-        return "unknown"
-
-    # =====================================================
-    # Star
-    # =====================================================
-
-    if vertices >= 6:
-
-        if solidity < 0.85:
-            return "star"
+    print(
+        f"[SHAPE DEBUG] "
+        f"vertices={vertices}, "
+        f"area={area:.0f}, "
+        f"circularity={circularity:.2f}, "
+        f"solidity={solidity:.2f}, "
+        f"aspect_ratio={aspect_ratio:.2f}"
+    )
 
     # =====================================================
     # Circle
     # =====================================================
 
-    if circularity > 0.80:
-
+    if (
+        vertices >= 7
+        and circularity > 0.82
+        and solidity > 0.95
+    ):
         return "circle"
+
+
+    # =====================================================
+    # Star
+    # =====================================================
+
+    if (
+        7 <= vertices <= 12
+        and 0.40 <= circularity <= 0.65
+        and 0.70 <= solidity <= 0.90
+    ):
+        return "star"
+
+
+    # =====================================================
+    # Triangle
+    # =====================================================
+
+    # 실제 장난감은 rounded corner 때문에
+    # vertices가 4로 잡히는 경우도 허용
+    if (
+        3 <= vertices <= 4
+        and 0.50 <= circularity < 0.70
+        and solidity > 0.95
+    ):
+        return "triangle"
+
 
     # =====================================================
     # Square
     # =====================================================
 
-    if vertices == 4:
+    if (
+        vertices == 4
+        and 0.70 <= circularity <= 0.82
+        and solidity > 0.95
+        and 0.75 <= aspect_ratio <= 1.35
+    ):
+        return "square"
 
-        if (
-            0.75 <= aspect_ratio <= 1.30
-            and solidity > 0.85
-        ):
-            return "square"
 
     return "unknown"
+
+
+def classify_object_shape(contour):
+
+    area = cv2.contourArea(contour)
+
+    if area < 1200:
+        return "unknown"
+
+    perimeter = cv2.arcLength(
+        contour,
+        True
+    )
+
+    if perimeter <= 0:
+        return "unknown"
+
+    approx = cv2.approxPolyDP(
+        contour,
+        0.025 * perimeter,
+        True
+    )
+
+    vertices = len(approx)
+
+    x, y, w, h = cv2.boundingRect(contour)
+
+    if h == 0:
+        return "unknown"
+
+    aspect_ratio = float(w) / float(h)
+
+    circularity = (
+        4.0
+        * np.pi
+        * area
+        / (perimeter * perimeter)
+    )
+
+    hull = cv2.convexHull(contour)
+
+    hull_area = cv2.contourArea(hull)
+
+    if hull_area <= 0:
+        return "unknown"
+
+    solidity = area / hull_area
+
+    print(
+        f"[OBJECT SHAPE] "
+        f"vertices={vertices}, "
+        f"area={area:.0f}, "
+        f"circularity={circularity:.2f}, "
+        f"solidity={solidity:.2f}, "
+        f"aspect={aspect_ratio:.2f}"
+    )
+
+    # =====================================================
+    # Circle
+    # =====================================================
+
+    if (
+        vertices >= 7
+        and circularity >= 0.80
+        and solidity >= 0.95
+        and 0.85 <= aspect_ratio <= 1.15
+    ):
+        return "circle"
+
+    # =====================================================
+    # Triangle
+    # =====================================================
+    #
+    # Rounded triangle can fluctuate between
+    # vertices=3 and vertices=4.
+    #
+    # Current measured object features:
+    # circularity ~= 0.65 ~ 0.66
+    # solidity    ~= 0.97
+    # aspect      ~= 0.97 ~ 0.98
+    # =====================================================
+
+    if (
+        3 <= vertices <= 4
+        and 0.60 <= circularity <= 0.69
+        and solidity >= 0.94
+        and 0.85 <= aspect_ratio <= 1.10
+    ):
+        return "triangle"
+
+
+    # =====================================================
+    # Square
+    # =====================================================
+
+    if (
+        4 <= vertices <= 5
+        and circularity >= 0.70
+        and solidity >= 0.90
+        and 0.75 <= aspect_ratio <= 1.30
+    ):
+        return "square"
+
+    # =====================================================
+    # Star
+    # =====================================================
+    #
+    # Star edge is slightly rounded/broken after thresholding,
+    # so approxPolyDP fluctuates between 6~8 vertices.
+    # =====================================================
+    if (
+        7 <= vertices <= 12
+        and 0.35 <= circularity <= 0.70
+        and 0.60 <= solidity <= 0.88
+        and 0.75 <= aspect_ratio <= 1.30
+    ):
+        return "star"
