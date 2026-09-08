@@ -21,15 +21,15 @@ tracking_node:
     track_type: "target"          # DetectedObject.type 필터
 
     # --- loop ---
-    update_rate_hz: 50.0          # 타이머 predict/publish 주기 (M3~)
+    update_rate_hz: 50.0          # 타이머 predict/publish 주기
 
     # --- Kalman filter (M2~) ---
     belt_speed: 50.0             # mm/s, 알려진 컨베이어 속도 (초기화·검증)
-    process_accel_std: 20.0      # mm/s^2, 등속이라 작게 (M6 튜닝)
+    process_accel_std: 20.0      # mm/s^2, 등속이라 작게
     meas_pos_std: [3.0, 3.0, 8.0]  # mm, (x, y, z). z 크게. M6에서 실측
-    gate_chi2: 7.815            # chi-square 95%, dof=3 (NIS 게이트)
-    dt_min: 0.005               # s
-    dt_max: 0.15                # s
+    gate_chi2: 7.815            # chi-square 95%, dof=3 (NIS(측정이 예상범위 안이면 1점) 게이트)
+    dt_min: 0.005               # 최소 시간간격 범위
+    dt_max: 0.15                # 최대 시간간격 범위
     warmup_updates: 5           # 초기 N회는 게이트 비활성화
 
     # --- coast / occlusion (M3~) ---
