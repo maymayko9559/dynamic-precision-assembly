@@ -136,7 +136,6 @@ class AssemblyController(Node):
         # ====================================================
 
         self.robot_pose_pub = self.create_publisher(
-            Float64MultiArray,
             "/robot/current_pose",
             10
         )
