@@ -1,0 +1,4 @@
+# srv/StopAssembly.srv
+---
+bool success
+string message
