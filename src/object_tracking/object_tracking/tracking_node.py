@@ -105,10 +105,9 @@ class TrackingNode(Node):
 
     # --------------------------------------------------------
     # 측정 콜백 : predict + update
+    # 카메라 메시지가 올 때마다 실행
     # --------------------------------------------------------
-
     def on_detection(self, msg: DetectedObject):
-
         # msg : 구독해서 방금 받은 msg가 없다면
         if msg.type != self.track_type:
             return
@@ -124,22 +123,31 @@ class TrackingNode(Node):
 
         # 첫 측정 -> 필터 켜기
         if not self.kf.initialized:
+            # 위치 = 이 측정값, 속도 =0
             self.kf.init_measurement(z)
+            # 두 시간을 지금으로 맞춤
             self.t_state = t
             self.t_last_meas = t
+            # 초기화 되었다는 로그를 띄움.
             self.get_logger().info(
                 f"filter initialized at "
                 f"({msg.x:.1f}, {msg.y:.1f}, {msg.z:.1f}) mm"
             )
             return
 
+        # 두 번째 측정부터 t - self.t_state = 이전 t_state 이후 흐른 시간(dt)
+        # 그 만큼 필터를 앞으로 predict
         # 지난 상태 시각 -> 이번 측정 시각까지 예측한 뒤 측정 반영
         self.kf.predict(t - self.t_state)
+        # 그 예측을 이번 측정 z로 update. 이상치면 accepted = False
         accepted = self.kf.update(z)
+        # 시간을 지금으로 갱신
         self.t_state = t
 
+        # 측정이 받아들여졌다면 마지막 측정시간 현재로 갱신
         if accepted:
             self.t_last_meas = t
+        # 이상치면 경고로그를 띄우고, 마지막 측정시간 갱신 안함
         else:
             self.get_logger().warn(
                 f"measurement rejected (NIS={self.kf.last_nis:.1f}) "
@@ -149,19 +157,24 @@ class TrackingNode(Node):
 
     # --------------------------------------------------------
     # 50Hz 타이머 : predict + 현재 추정 발행
+    # 0.02초마다 실행(1/50=0.02)
+    # 측정 없이 필터를 앞으로 밀고, 현재 추정을 발행함
     # --------------------------------------------------------
 
     def on_timer(self):
-
+        # 필터가 안켜져있으면 실행 안함
         if not self.kf.initialized:
             return
 
         now = self._now()
+        #지난 실행 이후 지난 시간만큼 predict. 보통 0.02초
         self.kf.predict(now - self.t_state)
+        # 시간 지금으로 갱신
         self.t_state = now
 
-        # 측정이 너무 오래 끊겼으면(가림 등) 발행 중단
+        # 마지막 진짜 측정 이후 흐른 시간
         coast = now - self.t_last_meas
+        # 측정이 너무 오래 끊겼으면(1초) 발행 중단
         if coast > self.max_coast_time:
             self.get_logger().warn(
                 f"target lost (no measurement for {coast:.2f}s) - not publishing",
@@ -169,16 +182,22 @@ class TrackingNode(Node):
             )
             return
 
+        # 필터의 현재 추정 위치 3개 값
         p = self.kf.position
 
+        # 빈 발행
         out = PredictedTarget()
+        # 마지막으로 본 도형 이름
         out.shape = self.last_shape
+        # 추정 위치를 채움
         out.x = float(p[0])
         out.y = float(p[1])
         out.z = float(p[2])
-        out.prediction_time = 0.0        # M3: 현재 추정치. 미래 예측은 M4.
+        # 현재 추정치
+        out.prediction_time = 0.0  
         self.pub.publish(out)
 
+        # 추정 위치, 속도, 빠르기, 불확실도를 1초에 한 번 로그로 띄움
         v = self.kf.velocity
         self.get_logger().info(
             f"est pos=({p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}) mm  "
