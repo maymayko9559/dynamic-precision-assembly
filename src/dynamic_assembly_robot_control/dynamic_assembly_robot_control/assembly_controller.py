@@ -53,6 +53,7 @@ from .robot_init import RobotInit
 from .motion_utils import MotionUtils
 from .target_manager import TargetManager
 from .motion_planner import MotionPlanner
+from .voice_motion_handler import VoiceMotionHandler
 
 
 # ============================================================
@@ -1134,10 +1135,7 @@ def main(args=None):
 
 
     node = AssemblyController()
-
-    node.keyword = None
-    from assembly_interfaces.srv import VoiceCommand
-    node.voice_cli = node.create_client(VoiceCommand, "/voice_command")
+    voice_handler = VoiceMotionHandler(node)
 
     # ========================================================
     # Doosan Robot Configuration
@@ -1152,15 +1150,15 @@ def main(args=None):
 
     try:
 
-        # node.robot_init.move_linear_ABS(
-        #     [363.80, -12.77, 396.74, 15.18, 179.83, 15.33], vel=20, acc=20
-        # )
+        node.robot_init.move_linear_ABS(
+            [363.80, -12.77, 396.74, 15.18, 179.83, 15.33], vel=20, acc=20
+        )
 
         # ====================================================
         # Initial Gripper State
         # ====================================================
 
-        #node.robot_init.open_gripper()
+        node.robot_init.open_gripper()
 
 
         # ====================================================
@@ -1172,20 +1170,18 @@ def main(args=None):
         # Object pick selection 용도.
         # ====================================================
 
-        if node.voice_cli.wait_for_service(timeout_sec=5.0):
-            future = node.voice_cli.call_async(VoiceCommand.Request())
-            rclpy.spin_until_future_complete(node, future, timeout_sec=60.0)
-            res = future.result()
-            if res is not None and res.success and res.shape:
-                node.keyword = res.shape
-                node.get_logger().info(f"{res.shape} 음성 인식 성공")
-
-        shape = node.keyword
+        voice_handler.request_shape()
+        shape = voice_handler.keyword
 
         node.get_logger().info(
             f"{shape} object + box target "
             f"검출 대기 중..."
         )
+        if not shape:
+            node.get_logger().error(
+                "음성 인식 실패: 도형을 선택하지 못했습니다.-작업중단"
+            )
+            return
 
 
 
