@@ -1,0 +1,5 @@
+# srv/VoiceCommand.srv
+---
+bool success
+string command
+string shape

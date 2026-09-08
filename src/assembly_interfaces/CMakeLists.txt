@@ -20,6 +20,13 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DetectedObject.msg"
+  "msg/PredictedTarget.msg"
+  "msg/TrackedObject.msg"
+  "msg/VoiceObject.msg"
+  "srv/SetLevel.srv"
+  "srv/StartAssembly.srv"
+  "srv/StopAssembly.srv"
+  "srv/VoiceCommand.srv"
 )
 
 

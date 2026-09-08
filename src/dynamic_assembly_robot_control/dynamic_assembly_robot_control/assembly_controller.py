@@ -50,6 +50,7 @@ from .robot_init import RobotInit
 from .motion_utils import MotionUtils
 
 
+
 # ============================================================
 # Robot Configuration
 # ============================================================
@@ -294,11 +295,13 @@ class AssemblyController(Node):
         들어오면 호출된다.
         """
 
+
+
         # ====================================================
         # Object
         # ====================================================
 
-        if msg.type == "object" and msg.shape == "circle":
+        if msg.type == "object" and msg.shape in ("circle", "square", "triangle", "star"):
 
             self.objects[msg.shape] = {
                 "x": msg.x,
@@ -518,10 +521,6 @@ class AssemblyController(Node):
 
             return
         
-        self.get_logger().info(
-            f"[CHECK] target z={target['z']:.2f} (실측 127.5mm)"
-        )
-
         # ====================================================
         # Rotation Difference
         # ====================================================
@@ -563,7 +562,7 @@ class AssemblyController(Node):
             [
                 obj["x"] + 3.0,
                 obj["y"] - 15.0,
-                obj["z"] +55,
+                obj["z"] + 55,
                 100.08,
                 179.98,
                 100.9
@@ -579,6 +578,7 @@ class AssemblyController(Node):
                 179.98,
                 100.9
             ]
+
         )
         self.get_logger().info(
             f"Pick-up completed for {shape}."
@@ -594,20 +594,31 @@ def main(args=None):
     rclpy.init(args=args)
 
     node = AssemblyController()
+    node.keyword = None                                       # ← 키워드 변수
+    from assembly_interfaces.srv import VoiceCommand          # ← main 안 import (기존 스타일)
+    node.voice_cli = node.create_client(VoiceCommand, "/voice_command")
+    
     import DR_init
     DR_init.__dsr__id = ROBOT_ID
     DR_init.__dsr__model = ROBOT_MODEL
     DR_init.__dsr__node = node
-
+    node.get_logger().info("홈위치 이동")
     node.robot_init.move_linear_ABS([363.80, -12.77, 396.74, 15.18, 179.83, 15.33], vel=20, acc=20)
     node.robot_init.open_gripper()
-    try:
-        rclpy.spin_once(node)
+    node.keyword = None
+    if node.voice_cli.wait_for_service(timeout_sec=5.0):
+        future = node.voice_cli.call_async(VoiceCommand.Request())
+        rclpy.spin_until_future_complete(node, future, timeout_sec=60.0)
+        res = future.result()
+        if res is not None and res.success and res.shape:
+            node.keyword = res.shape
+            node.get_logger().info(f"{shape} object 검출 성공")
 
-        shape = "circle"
-        node.get_logger().info(f"{shape} object/target 검출 대기 중...")
+    shape = node.keyword    # 실패 시 폴백
+    
 
         # 비전 콜백이 self.objects/self.targets를 채울 때까지 spin
+    try:
         while rclpy.ok():
             rclpy.spin_once(node, timeout_sec=0.1)
             obj, target = node.get_matched_pair(shape)

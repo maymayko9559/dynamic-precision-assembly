@@ -1,0 +1,5 @@
+# srv/SetLevel.srv
+int32 level
+---
+bool success
+string message
