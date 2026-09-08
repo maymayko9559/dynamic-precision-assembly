@@ -32,6 +32,7 @@ setup(
             'motion_planner = dynamic_assembly_robot_control.motion_planner:main',
             'target_manager = dynamic_assembly_robot_control.target_manager:main',
             'motion_utils = dynamic_assembly_robot_control.motion_utils:main',
+            'voice_motion_handler = dynamic_assembly_robot_control.voice_motion_handler:main',
         ],
     },
 )
