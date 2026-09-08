@@ -39,7 +39,7 @@ class TargetDetector:
 
     def __init__(self):
         # 너무 작은 contour 제거용
-        self.min_area = 1000
+        self.min_area = 8000
 
     # ========================================================
     # Detect Targets

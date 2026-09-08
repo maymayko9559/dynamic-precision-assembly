@@ -301,3 +301,47 @@ class RobotInit:
     def disable_soft_z(self):
         from DSR_ROBOT2 import release_compliance_ctrl
         release_compliance_ctrl()
+
+    # ========================================================
+    # Rotate Wrist Test
+    # ========================================================
+
+    def rotate_wrist(
+        self,
+        current_joints,
+        delta_angle=10.0,
+        vel=10,
+        acc=10
+    ):
+        from DSR_ROBOT2 import movej, posj
+
+        if current_joints is None or len(current_joints) < 6:
+            self.node.get_logger().error(
+                "[ROTATE TEST] Current joint position is not available."
+            )
+            return False
+
+        # 현재 J1 ~ J6 복사
+        target_joints = list(current_joints[:6])
+
+        # J6만 변경
+        old_j6 = target_joints[5]
+        target_joints[5] += float(delta_angle)
+
+        self.node.get_logger().info(
+            f"[ROTATE TEST] "
+            f"J6: {old_j6:.2f} -> {target_joints[5]:.2f} deg "
+            f"(delta={delta_angle:.2f} deg)"
+        )
+
+        movej(
+            posj(target_joints),
+            vel=vel,
+            acc=acc
+        )
+
+        self.node.get_logger().info(
+            "[ROTATE TEST] Wrist rotation completed."
+        )
+
+        return True
