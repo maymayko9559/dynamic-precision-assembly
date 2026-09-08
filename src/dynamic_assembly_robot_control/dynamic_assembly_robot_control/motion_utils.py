@@ -274,15 +274,6 @@ class MotionUtils:
         """
         Drop the currently held object into the box.
 
-        Current LV1:
-            Static box.
-
-        Future:
-            target_pose can be replaced with a predicted
-            moving-box position.
-
-        Parameters
-        ----------
         target_pose:
             [x, y, z, rx, ry, rz]
 
@@ -297,7 +288,6 @@ class MotionUtils:
         """
 
         from DSR_ROBOT2 import wait
-
 
         x, y, z, rx, ry, rz = target_pose
 
@@ -344,18 +334,45 @@ class MotionUtils:
         ]
 
 
+        # ====================================================
+        # DEBUG: Planned Drop Motion
+        # ====================================================
+
         self.ri.node.get_logger().info(
-            f"[DROP] approach={approach_pose}"
+            "========================================"
         )
 
         self.ri.node.get_logger().info(
-            f"[DROP] drop_pose={drop_pose}"
+            f"[DROP PLAN] "
+            f"target_pose={target_pose}"
+        )
+
+        self.ri.node.get_logger().info(
+            f"[DROP PLAN] "
+            f"approach_pose={approach_pose}"
+        )
+
+        self.ri.node.get_logger().info(
+            f"[DROP PLAN] "
+            f"drop_pose={drop_pose}"
+        )
+
+        self.ri.node.get_logger().info(
+            f"[DROP PLAN] "
+            f"retreat_pose={retreat_pose}"
         )
 
 
         # ====================================================
         # 1. Move Above Box
         # ====================================================
+
+        self.ri.node.get_logger().info(
+            f"[APPROACH COMMAND] "
+            f"pose={approach_pose}, "
+            f"vel={approach_vel}, "
+            f"acc={acc}"
+        )
 
         self.ri.move_linear_ABS(
             approach_pose,
@@ -369,6 +386,13 @@ class MotionUtils:
         # ====================================================
         # 2. Move Down Into Safe Drop Height
         # ====================================================
+
+        self.ri.node.get_logger().info(
+            f"[DROP COMMAND] "
+            f"pose={drop_pose}, "
+            f"vel={drop_vel}, "
+            f"acc={acc}"
+        )
 
         self.ri.move_linear_ABS(
             drop_pose,
@@ -384,7 +408,8 @@ class MotionUtils:
         # ====================================================
 
         self.ri.node.get_logger().info(
-            "[DROP] Release object."
+            f"[DROP RELEASE] "
+            f"Opening gripper at pose={drop_pose}"
         )
 
         self.ri.open_gripper()
@@ -395,6 +420,13 @@ class MotionUtils:
         # ====================================================
         # 4. Retreat
         # ====================================================
+
+        self.ri.node.get_logger().info(
+            f"[RETREAT COMMAND] "
+            f"pose={retreat_pose}, "
+            f"vel={approach_vel}, "
+            f"acc={acc}"
+        )
 
         self.ri.move_linear_ABS(
             retreat_pose,
@@ -407,6 +439,9 @@ class MotionUtils:
             "[DROP] Object placement completed."
         )
 
+        self.ri.node.get_logger().info(
+            "========================================"
+        )
 
         return True
 

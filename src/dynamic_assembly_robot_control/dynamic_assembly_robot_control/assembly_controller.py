@@ -41,6 +41,7 @@
 
 
 import rclpy
+import time
 
 from rclpy.node import Node
 
@@ -121,6 +122,15 @@ BOX_RETREAT_HEIGHT = 100.0
 
 
 # ============================================================
+# LV3 Moving Target Configuration
+# ============================================================
+
+LV3_TRACKING_DURATION = 1.0
+LV3_PREDICTION_TIME = 2.0
+LV3_MIN_MEASUREMENTS = 6
+
+
+# ============================================================
 # Robot Home Position
 # ============================================================
 
@@ -131,6 +141,28 @@ HOME_JOINT = [
     0.0,    # J4
     90.0,   # J5
     0.0,    # J6
+]
+
+# ============================================================
+# Camera View Poses
+# ============================================================
+
+BOARD_TRACKING_POSE = [
+    -279.86,
+    -474.66,
+    362.31,
+    65.95,
+    -178.16,
+    157.31
+]
+
+OBJECT_VIEW_POSE = [
+    363.80,
+    -12.77,
+    396.74,
+    15.18,
+    179.83,
+    15.33
 ]
 
 
@@ -202,6 +234,12 @@ class AssemblyController(Node):
 
         self.latest_target_time = None
 
+        # ========================================================
+        # 3-1. Target Tracking Gate
+        # ========================================================
+
+        self.target_tracking_enabled = False
+
 
         # ========================================================
         # 4. Current Joint State
@@ -250,7 +288,9 @@ class AssemblyController(Node):
         self.target_manager = TargetManager(
             node=self,
             history_size=20,
-            stale_timeout=0.5,
+            stale_timeout=2.0,
+            velocity_window=10,
+            min_velocity_samples=4,
         )
 
 
@@ -368,8 +408,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_joint(
             HOME_JOINT,
-            vel=30,
-            acc=30
+            vel=50,
+            acc=50
         )
 
         self.get_logger().info(
@@ -440,15 +480,15 @@ class AssemblyController(Node):
 
                 return
             
-            self.get_logger().info(
-                f"[ROBOT POSE] "
-                f"x={pose_data[0]:.2f}, "
-                f"y={pose_data[1]:.2f}, "
-                f"z={pose_data[2]:.2f}, "
-                f"rx={pose_data[3]:.2f}, "
-                f"ry={pose_data[4]:.2f}, "
-                f"rz={pose_data[5]:.2f}"
-            )
+            # self.get_logger().info(
+            #     f"[ROBOT POSE] "
+            #     f"x={pose_data[0]:.2f}, "
+            #     f"y={pose_data[1]:.2f}, "
+            #     f"z={pose_data[2]:.2f}, "
+            #     f"rx={pose_data[3]:.2f}, "
+            #     f"ry={pose_data[4]:.2f}, "
+            #     f"rz={pose_data[5]:.2f}"
+            # )
 
             robot_pose = [
                 float(pose_data[0]),
@@ -520,12 +560,12 @@ class AssemblyController(Node):
             # Shape별 latest object 저장
             self.objects[shape] = object_info
 
-            self.get_logger().info(
-                f"[OBJECT UPDATE] "
-                f"shape={shape}, "
-                f"xyz=({x:.1f}, {y:.1f}, {z:.1f}), "
-                f"angle={angle:.1f}"
-            )
+            # self.get_logger().info(
+            #     f"[OBJECT UPDATE] "
+            #     f"shape={shape}, "
+            #     f"xyz=({x:.1f}, {y:.1f}, {z:.1f}), "
+            #     f"angle={angle:.1f}"
+            # )
 
             return
 
@@ -555,6 +595,9 @@ class AssemblyController(Node):
         # ========================================================
 
         if object_type == "target":
+
+            if not self.target_tracking_enabled:
+                return
 
             # ----------------------------------------------------
             # TargetManager Update
@@ -707,31 +750,12 @@ class AssemblyController(Node):
         self,
         shape
     ):
-        """
-        Current LV1 task:
-
-        1. Get detected object
-        2. Get latest box center
-        3. Pick object
-        4. Move above box
-        5. Drop object into box
-
-        No shape matching.
-        No orientation alignment.
-        No insertion.
-        """
-
 
         # ====================================================
-        # Get Object + Box Target
+        # 1. Get detected object
         # ====================================================
 
-        obj, target = self.get_pick_and_box_target(
-            shape
-        )
-
-
-        if obj is None:
+        if shape not in self.objects:
 
             self.get_logger().warning(
                 f"{shape} object is not detected."
@@ -740,108 +764,40 @@ class AssemblyController(Node):
             return False
 
 
-        if target is None:
-
-            self.get_logger().warning(
-                "Box target is not detected."
-            )
-
-            return False
+        obj = self.objects[shape]
 
 
         # ====================================================
-        # Debug Information
+        # 2. Freeze object position
         # ====================================================
 
-        self.get_logger().info(
-            "========================================"
-        )
+        fixed_object = {
+            "type": obj["type"],
+            "shape": obj["shape"],
+            "x": float(obj["x"]),
+            "y": float(obj["y"]),
+            "z": float(obj["z"]),
+            "angle": float(obj["angle"]),
+        }
 
-        self.get_logger().info(
-            f"[TASK] Pick object: {shape}"
-        )
-
-        self.get_logger().info(
-            f"[TASK] Object position: "
-            f"({obj['x']:.2f}, "
-            f"{obj['y']:.2f}, "
-            f"{obj['z']:.2f})"
-        )
-
-        self.get_logger().info(
-            f"[TASK] Box center: "
-            f"({target['x']:.2f}, "
-            f"{target['y']:.2f}, "
-            f"{target['z']:.2f})"
-        )
-
-        self.get_logger().info(
-            f"[TASK] Target shape(meta): "
-            f"{target['shape']}"
-        )
-
-
-        target_age = self.get_target_age()
-
-        if target_age is not None:
-
-            self.get_logger().info(
-                f"[TASK] Target measurement age: "
-                f"{target_age:.3f} sec"
-            )
-
-
-        # ====================================================
-        # Object Pose
-        # ====================================================
 
         object_pose = [
-            obj["x"] + OBJECT_X_OFFSET,
-            obj["y"] + OBJECT_Y_OFFSET,
-            obj["z"] + OBJECT_Z_OFFSET,
+            fixed_object["x"] + OBJECT_X_OFFSET,
+            fixed_object["y"] + OBJECT_Y_OFFSET,
+            fixed_object["z"] + OBJECT_Z_OFFSET,
             TOOL_RX,
             TOOL_RY,
             TOOL_RZ,
         ]
 
 
-        self.get_logger().info(
-            f"[TASK] Corrected object pose: "
-            f"{object_pose}"
-        )
-
-
         # ====================================================
-        # Freeze Box Target BEFORE Robot Motion
+        # 3. Pick
         # ====================================================
-        #
-        # LV1 box is stationary.
-        # The eye-in-hand camera moves during pick, so box detections
-        # produced while the robot is moving must NOT replace the
-        # already-valid stationary box coordinate.
-        # ====================================================
-
-        fixed_target = {
-            "type": target.get("type", "target"),
-            "shape": target.get("shape", "box"),
-            "x": float(target["x"]),
-            "y": float(target["y"]),
-            "z": float(target["z"]),
-            "angle": float(target.get("angle", 0.0)),
-        }
 
         self.get_logger().info(
-            f"[FIXED BOX TARGET] "
-            f"xyz=("
-            f"{fixed_target['x']:.2f}, "
-            f"{fixed_target['y']:.2f}, "
-            f"{fixed_target['z']:.2f})"
+            f"[TASK] Pick object: {shape}"
         )
-
-
-        # ====================================================
-        # Pick Object
-        # ====================================================
 
         self.mu.pick_up(
             object_pose,
@@ -852,82 +808,193 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # LV1: keep using the box coordinate captured before pick.
-        # Do NOT replace it with get_latest_target() after motion.
+        # 4. Move to Board Tracking Pose
         # ====================================================
 
-        target = fixed_target
+        self.target_tracking_enabled = False
 
-
-        # ====================================================
-        # Target Pose
-        # ====================================================
-
-
-        print("TARGET_X_OFFSET =", TARGET_X_OFFSET)
-        print("TARGET_Y_OFFSET =", TARGET_Y_OFFSET)
-        print("TARGET_Z_OFFSET =", TARGET_Z_OFFSET)
-
-        print(
-            "RAW TARGET =",
-            target["x"],
-            target["y"],
-            target["z"]
+        self.get_logger().info(
+            "[TASK] Moving to board tracking pose..."
         )
 
-        
+        self.robot_init.move_linear_ABS(
+            BOARD_TRACKING_POSE,
+            vel=40,
+            acc=40
+        )
+
+
+        # ====================================================
+        # 5. Stabilize robot pose before using ArUco target
+        # ====================================================
+
+        self.get_logger().info(
+            "[TASK] Board tracking pose reached. "
+            "Waiting for stabilization..."
+        )
+
+        settle_end = time.monotonic() + 0.8
+
+        while rclpy.ok() and time.monotonic() < settle_end:
+            rclpy.spin_once(
+                self,
+                timeout_sec=0.05
+            )
+
+
+        # ====================================================
+        # 6. Start NEW ArUco / Box Target Tracking
+        # ====================================================
+
+        self.latest_target = None
+        self.latest_target_time = None
+        self.targets.clear()
+        self.target_manager.clear()
+
+        self.target_tracking_enabled = True
+
+        self.get_logger().info(
+            "[TASK] ArUco box tracking ENABLED."
+        )
+
+        # ====================================================
+        # 7. Collect Moving Box Measurements
+        # ====================================================
+
+        tracking_start = time.monotonic()
+
+        while rclpy.ok():
+
+            rclpy.spin_once(
+                self,
+                timeout_sec=0.05
+            )
+
+            elapsed = (
+                time.monotonic()
+                - tracking_start
+            )
+
+            enough_time = (
+                elapsed
+                >= LV3_TRACKING_DURATION
+            )
+
+            enough_samples = (
+                self.target_manager.get_history_count()
+                >= LV3_MIN_MEASUREMENTS
+            )
+
+            if (
+                enough_time
+                and enough_samples
+            ):
+                break
+
+
+        if not self.target_manager.has_target():
+
+            self.get_logger().warning(
+                "[LV3] Box target was not detected."
+            )
+
+            return False
+
+
+        # ====================================================
+        # 8. Estimate Velocity
+        # ====================================================
+
+        vx, vy, vz = (
+            self.target_manager.get_velocity()
+        )
+
+        self.get_logger().info(
+            f"[LV3 VELOCITY] "
+            f"vx={vx:.2f}, "
+            f"vy={vy:.2f}, "
+            f"vz={vz:.2f} mm/s"
+        )
+
+
+        # ====================================================
+        # 9. Predict Future Target
+        # ====================================================
+
+        predicted_target = (
+            self.target_manager.predict_from_now(
+                future_time=LV3_PREDICTION_TIME
+            )
+        )
+
+        if predicted_target is None:
+
+            self.get_logger().warning(
+                "[LV3] Failed to predict box target."
+            )
+
+            return False
+
+
+        self.get_logger().info(
+            f"[LV3 PREDICTED TARGET] "
+            f"dt={predicted_target['prediction_time']:.2f}s, "
+            f"xyz=("
+            f"{predicted_target['x']:.2f}, "
+            f"{predicted_target['y']:.2f}, "
+            f"{predicted_target['z']:.2f})"
+        )
+
+
+        # ====================================================
+        # 10. Freeze Predicted Target
+        # ====================================================
+
+        fixed_target = {
+            "shape": predicted_target.get(
+                "shape",
+                "box"
+            ),
+            "x": float(
+                predicted_target["x"]
+            ),
+            "y": float(
+                predicted_target["y"]
+            ),
+            "z": float(
+                predicted_target["z"]
+            ),
+            "angle": float(
+                predicted_target.get(
+                    "angle",
+                    0.0
+                )
+            ),
+        }
+
+        self.get_logger().info(
+            f"[FIXED PREDICTED BOX TARGET] "
+            f"xyz=("
+            f"{fixed_target['x']:.2f}, "
+            f"{fixed_target['y']:.2f}, "
+            f"{fixed_target['z']:.2f})"
+        )
+
+        # ====================================================
+        # 11. Drop
+        # ====================================================
+
         target_pose = [
-            target["x"] + TARGET_X_OFFSET,
-            target["y"] + TARGET_Y_OFFSET,
-            target["z"] + TARGET_Z_OFFSET,
+            fixed_target["x"] + TARGET_X_OFFSET,
+            fixed_target["y"] + TARGET_Y_OFFSET,
+            fixed_target["z"] + TARGET_Z_OFFSET,
             TOOL_RX,
             TOOL_RY,
             TOOL_RZ,
         ]
 
 
-        print("FINAL TARGET =", target_pose)
-
-
-        # ====================================================
-        # DEBUG: Final Drop Command
-        # ====================================================
-        #
-        # Vision에서 받은 target 좌표와
-        # 실제 drop_object()에 전달되는 좌표를 비교한다.
-        #
-        # 이상한 위치로 이동했을 때:
-        #
-        # [TARGET UPDATE]
-        #       ↓
-        # [DROP COMMAND]
-        #
-        # 두 좌표가 같은지 확인한다.
-        # ====================================================
-
-        self.get_logger().info(
-            f"[DROP COMMAND] "
-            f"target_xyz=("
-            f"{target['x']:.2f}, "
-            f"{target['y']:.2f}, "
-            f"{target['z']:.2f}), "
-            f"target_pose={target_pose}, "
-            f"approach_height={BOX_APPROACH_HEIGHT:.1f}, "
-            f"drop_height={BOX_DROP_HEIGHT:.1f}, "
-            f"retreat_height={BOX_RETREAT_HEIGHT:.1f}"
-        )
-
-        # ====================================================
-        # Drop Object Into Box
-        # ====================================================
-        
-        self.get_logger().info(
-            f"[DROP INPUT] "
-            f"target_xyz=({target['x']:.2f}, "
-            f"{target['y']:.2f}, "
-            f"{target['z']:.2f}), "
-            f"target_pose={target_pose}"
-        )
+        self.target_tracking_enabled = False
 
         success = self.mu.drop_object(
             target_pose,
@@ -937,25 +1004,7 @@ class AssemblyController(Node):
         )
 
 
-        if not success:
-
-            self.get_logger().error(
-                "[TASK] Drop failed."
-            )
-
-            return False
-
-
-        self.get_logger().info(
-            f"[TASK] {shape} -> BOX completed."
-        )
-
-        self.get_logger().info(
-            "========================================"
-        )
-
-        return True
-
+        return success
 
     # ========================================================
     # Joint State Callback
@@ -1151,7 +1200,7 @@ def main(args=None):
     try:
 
         node.robot_init.move_linear_ABS(
-            [363.80, -12.77, 396.74, 15.18, 179.83, 15.33], vel=20, acc=20
+            OBJECT_VIEW_POSE, vel=40, acc=40
         )
 
         # ====================================================
@@ -1174,20 +1223,21 @@ def main(args=None):
         shape = voice_handler.keyword
 
         node.get_logger().info(
-            f"{shape} object + box target "
-            f"검출 대기 중..."
+            f"{shape} object 검출 대기 중..."
         )
         if not shape:
-            node.get_logger().error(
+            node.get_logger().warn(
                 "음성 인식 실패: 도형을 선택하지 못했습니다.-작업중단"
             )
-            return
+            shape = "circle"
 
 
 
         # ====================================================
-        # Wait for Object + ANY Target
+        # Wait for Object ONLY
         # ====================================================
+
+        node.target_tracking_enabled = False
 
         while rclpy.ok():
 
@@ -1196,19 +1246,7 @@ def main(args=None):
                 timeout_sec=0.1
             )
 
-
-            obj, target = (
-                node.get_pick_and_box_target(
-                    shape
-                )
-            )
-
-
-            if (
-                obj is not None
-                and target is not None
-            ):
-
+            if shape in node.objects:
                 break
 
 
