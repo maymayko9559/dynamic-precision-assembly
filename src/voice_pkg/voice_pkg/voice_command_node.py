@@ -24,7 +24,9 @@ class VoiceCommandNode(Node):
         # 절대 이름(/voice_command)으로 만들어야 controller의
         # dsr01 namespace와 무관하게 매칭된다.
         self.srv = self.create_service(
-            VoiceCommand, "/voice_command", self.handle_voice_command
+
+        VoiceCommand, "/voice_command", self.handle_voice_command
+
         )
         self.get_logger().info("voice_command 서비스 대기 중...")
 
@@ -71,7 +73,6 @@ class VoiceCommandNode(Node):
         response.shape = shape or ""
         self.get_logger().info(f"인식 결과 → shape={response.shape}, command={command}")
         return response
-
 
 def main(args=None):
     rclpy.init(args=args)
