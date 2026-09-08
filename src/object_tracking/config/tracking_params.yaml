@@ -1,0 +1,36 @@
+# ============================================================
+# tracking_params.yaml
+# ============================================================
+# object_tracking / tracking_node parameters.
+#
+# M1 에서 실제로 사용하는 값: input_topic, output_topic, track_type
+# 나머지는 M2~M6 에서 사용 (미리 정의해 둠).
+# ============================================================
+
+tracking_node:
+  ros__parameters:
+
+    # --- I/O ---
+    input_topic: /vision/detected_object
+    output_topic: /tracking/predicted_target
+    track_type: "target"          # DetectedObject.type 필터
+
+    # --- loop ---
+    update_rate_hz: 50.0          # 타이머 predict/publish 주기 (M3~)
+
+    # --- Kalman filter (M2~) ---
+    belt_speed: 50.0             # mm/s, 알려진 컨베이어 속도 (초기화·검증)
+    process_accel_std: 20.0      # mm/s^2, 등속이라 작게 (M6 튜닝)
+    meas_pos_std: [3.0, 3.0, 8.0]  # mm, (x, y, z). z 크게. M6에서 실측
+    gate_chi2: 7.815            # chi-square 95%, dof=3 (NIS 게이트)
+    dt_min: 0.005               # s
+    dt_max: 0.15                # s
+    warmup_updates: 5           # 초기 N회는 게이트 비활성화
+
+    # --- coast / occlusion (M3~) ---
+    max_coast_time: 1.0         # s, 초과 시 예측 발행 중단
+
+    # --- prediction (M4~) ---
+    pipeline_latency: 0.05      # s, 이미지 캡처 -> 노드 수신 (M6 실측)
+    prediction_horizon: 0.5    # s, PredictedTarget.prediction_time
+    min_speed_for_prediction: 2.0  # mm/s 미만이면 정지로 간주
