@@ -77,7 +77,6 @@ from rclpy.qos import qos_profile_sensor_data
 
 
 
-
 class VisionManager(Node):
 
     def __init__(self):
@@ -122,6 +121,7 @@ class VisionManager(Node):
             self.robot_pose_callback,
             10
         )
+
         # ============================================================
         # Camera Topics
         # ============================================================
@@ -290,30 +290,32 @@ class VisionManager(Node):
 
         return board_roi, targets
 
-    def process_objects(self, raw_frame, board_corners):
+    # ============================================================
+    # Process Objects
+    # ============================================================
 
-        # =========================================================
-        # Create Pick ROI
-        # =========================================================
+    def process_objects(self, raw_frame):
 
-        pick_roi = self.create_pick_roi(raw_frame, board_corners)
+        if raw_frame is None:
+            return None, []
 
-        # =========================================================
-        # Detect Objects
-        # =========================================================
+        # Detect objects from the entire camera image.
+        object_frame = raw_frame.copy()
 
-        objects = self.object_detector.detect(pick_roi)
+        objects = self.object_detector.detect(
+            object_frame
+        )
 
-        # =========================================================
-        # Draw Objects
-        # =========================================================
-
+        # Draw detected objects
         for obj in objects:
-            self.draw_detection(pick_roi, obj)
+            self.draw_detection(
+                object_frame,
+                obj
+            )
 
-        return pick_roi, objects
+        return object_frame, objects
 
-
+    # Future use
     def create_pick_roi(self, raw_frame, board_corners):
 
         # =========================================================
@@ -377,22 +379,49 @@ class VisionManager(Node):
             return False
 
         return True
-
+    
     def detect_board(self, raw_frame, debug_frame):
 
-        corners, ids = self.board_detector.detect(raw_frame)
+        corners, ids = self.board_detector.detect(
+            raw_frame
+        )
 
-        board_corners = self.board_detector.get_board_corners(corners, ids)
+        board_corners = (
+            self.board_detector.get_board_corners(
+                corners,
+                ids
+            )
+        )
 
-        debug_frame = self.board_detector.draw_board(debug_frame, corners, ids)
+        marker_centers = (
+            self.board_detector.get_marker_centers(
+                corners,
+                ids
+            )
+        )
+
+        debug_frame = (
+            self.board_detector.draw_board(
+                debug_frame,
+                corners,
+                ids
+            )
+        )
 
         if board_corners is not None:
-            debug_frame = self.board_detector.draw_board_boundary(
-                debug_frame,
-                board_corners
+
+            debug_frame = (
+                self.board_detector.draw_board_boundary(
+                    debug_frame,
+                    board_corners
+                )
             )
 
-        return board_corners, debug_frame
+        return (
+            board_corners,
+            marker_centers,
+            debug_frame
+        )
 
 
     def process_target_positions(self, targets, board_corners, debug_frame):
@@ -444,6 +473,14 @@ class VisionManager(Node):
                 self.coordinate_transform.get_robot_pose_matrix(
                     *robot_pose
                 )
+            )
+
+
+            self.get_logger().info(
+                f"[TRANSFORM INPUT] "
+                f"robot_pose={self.current_robot_pose}, "
+                f"camera_xyz={camera_position}",
+                throttle_duration_sec=0.5
             )
 
             robot_position = (
@@ -581,54 +618,14 @@ class VisionManager(Node):
 
 
             # ====================================================
-            # Detect ArUco Board / Box
+            # 1. OBJECT DETECTION
+            #
+            # Object detection is independent from box detection.
+            # Search the entire camera image.
             # ====================================================
 
-            board_corners, debug_frame = self.detect_board(
-                raw_frame,
-                debug_frame
-            )
-
-
-            # ====================================================
-            # Board Not Detected
-            # ====================================================
-
-            if board_corners is None:
-
-                self.get_logger().info(
-                    "Waiting for ArUco IDs 0, 1, 2, 3...",
-                    throttle_duration_sec=1.0
-                )
-
-                # 중요:
-                # target=(0,0,0) 같은 잘못된 값을 publish하지 않는다.
-                #
-                # Robot Control의 TargetManager가
-                # 마지막 정상 target을 유지하도록 한다.
-
-                self.show_debug(debug_frame)
-
-                return
-
-
-            # ====================================================
-            # NEW: Box Center -> Target
-            # ====================================================
-
-            self.process_box_target(
-                board_corners,
-                debug_frame
-            )
-
-
-            # ====================================================
-            # Object Detection
-            # ====================================================
-
-            pick_roi, objects = self.process_objects(
-                raw_frame,
-                board_corners
+            object_frame, objects = self.process_objects(
+                raw_frame
             )
 
             self.process_object_positions(
@@ -637,12 +634,76 @@ class VisionManager(Node):
 
 
             # ====================================================
-            # Debug Window
+            # 2. BOX DETECTION
+            #
+            # ArUco IDs 0,1,2,3 define the box.
+            # ====================================================
+
+            board_corners, marker_centers, debug_frame = (
+                self.detect_board(
+                    raw_frame,
+                    debug_frame
+                )
+            )
+
+
+            if marker_centers is not None:
+
+                for marker_id, center in marker_centers.items():
+
+                    u = int(round(center[0]))
+                    v = int(round(center[1]))
+
+                    cv2.circle(
+                        debug_frame,
+                        (u, v),
+                        6,
+                        (0, 0, 255),
+                        -1
+                    )
+
+                    cv2.putText(
+                        debug_frame,
+                        f"ID {marker_id}",
+                        (u + 8, v),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 0, 255),
+                        2
+                    )
+
+            self.get_logger().info(
+                f"[ARUCO CENTERS] {marker_centers}",
+                throttle_duration_sec=1.0
+            )
+
+            # ====================================================
+            # 3. BOX TARGET
+            # ====================================================
+
+            if board_corners is not None:
+
+                self.process_box_target(
+                    board_corners,
+                    marker_centers,
+                    debug_frame
+                )
+
+            else:
+
+                self.get_logger().info(
+                    "Waiting for Box ArUco IDs 0, 1, 2, 3...",
+                    throttle_duration_sec=1.0
+                )
+
+
+            # ====================================================
+            # 4. Debug Windows
             # ====================================================
 
             cv2.imshow(
-                "Pick ROI",
-                pick_roi
+                "Object Detection",
+                object_frame
             )
 
             self.show_debug(
@@ -660,8 +721,12 @@ class VisionManager(Node):
     # Process Box Center Target
     # ============================================================
 
-    def process_box_target(self, board_corners, debug_frame):
-
+    def process_box_target(
+        self,
+        board_corners,
+        marker_centers,
+        debug_frame
+    ):
         if board_corners is None:
             return
 
@@ -723,29 +788,41 @@ class VisionManager(Node):
         )
 
 
+
         # ========================================================
-        # 3. Pixel -> Camera Coordinate
+        # 3. Estimate Box Pose using ArUco
         # ========================================================
 
-        camera_position = self.get_camera_position(
-            u,
-            v
+        pose_result = self.board_detector.estimate_box_pose(
+            marker_centers,
+            self.camera_intrinsics
         )
 
-        if camera_position is None:
+        if pose_result is None:
             self.get_logger().warning(
-                "[BOX TARGET] Camera position unavailable."
+                "[BOX TARGET] solvePnP failed.",
+                throttle_duration_sec=1.0
             )
             return
+
+
+        camera_position, rvec, tvec = pose_result
 
 
         # ========================================================
         # 4. Camera -> Robot BASE Coordinate
         # ========================================================
 
+        self.get_logger().info(
+            f"[BOX PNP CAMERA] "
+            f"camera_xyz={camera_position}",
+            throttle_duration_sec=1.0
+        )
+
         if self.current_robot_pose is None:
-            self.get_logger().warning(
-                "[BOX TARGET] Robot pose unavailable."
+            self.get_logger().info(
+                "[BOX TARGET] Waiting for robot pose...",
+                throttle_duration_sec=1.0
             )
             return
 
@@ -761,6 +838,27 @@ class VisionManager(Node):
                 T_base2gripper
             )
         )
+
+
+    
+        self.get_logger().info(
+            f"[BOX TARGET PNP] "
+            f"pixel=({u}, {v}), "
+            f"camera_xyz={camera_position}, "
+            f"robot_xyz={robot_position}",
+            throttle_duration_sec=1.0
+)
+        # ========================================================
+        # DEBUG: Box Target Position
+        # ========================================================
+
+        # self.get_logger().info(
+        #     f"[BOX TARGET] "
+        #     f"pixel=({u}, {v}), "
+        #     f"camera_xyz={camera_position}, "
+        #     f"robot_xyz={robot_position}",
+        #     throttle_duration_sec=1.0
+        # )
 
 
         # ========================================================
@@ -788,12 +886,7 @@ class VisionManager(Node):
             robot_position
         )
 
-        self.get_logger().info(
-            f"[BOX TARGET] "
-            f"pixel=({u}, {v}), "
-            f"camera_xyz={camera_position}, "
-            f"robot_xyz={robot_position}"
-        )
+
 # ============================================================
 # Main
 # ============================================================

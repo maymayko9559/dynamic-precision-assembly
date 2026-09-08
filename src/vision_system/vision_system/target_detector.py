@@ -145,14 +145,14 @@ class TargetDetector:
             # --------------------------------------------------------
 
 
-            target = {
-                "type": "target",
-                "shape": shape,
-                "center": center,
-                "angle": angle,
-                "area": area,
-                "contour": contour
-            }
+            # target = {
+            #     "type": "target",
+            #     "shape": shape,
+            #     "center": center,
+            #     "angle": angle,
+            #     "area": area,
+            #     "contour": contour
+            # }
 
             targets.append(target)
 

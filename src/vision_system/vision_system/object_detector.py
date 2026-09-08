@@ -105,9 +105,9 @@ class ObjectDetector:
 
         contours = find_contours(processed_image)
 
-        print(
-            f"[OBJECT DEBUG] contours found={len(contours)}"
-        )
+        # print(
+        #     f"[OBJECT DEBUG] contours found={len(contours)}"
+        # )
 
         for contour in contours:
 
@@ -117,9 +117,9 @@ class ObjectDetector:
             if area < self.min_area:
                 continue
 
-            print(
-                f"[OBJECT CONTOUR] area={area:.0f}"
-            )
+            # print(
+            #     f"[OBJECT CONTOUR] area={area:.0f}"
+            # )
 
             # ============================================
             # IMPORTANT:
@@ -128,11 +128,11 @@ class ObjectDetector:
 
             shape = classify_object_shape(contour)
 
-            print(
-                f"[OBJECT CLASSIFY] "
-                f"area={area:.0f}, "
-                f"shape={shape}"
-            )
+            # print(
+            #     f"[OBJECT CLASSIFY] "
+            #     f"area={area:.0f}, "
+            #     f"shape={shape}"
+            # )
 
             # None / unknown 모두 reject
             if shape is None or shape == "unknown":
@@ -159,12 +159,12 @@ class ObjectDetector:
 
             objects.append(detected_object)
 
-            print(
-                f"[OBJECT DETECTED] "
-                f"shape={shape}, "
-                f"center={center}, "
-                f"angle={angle:.2f}, "
-                f"area={area:.0f}"
-            )
+            # print(
+            #     f"[OBJECT DETECTED] "
+            #     f"shape={shape}, "
+            #     f"center={center}, "
+            #     f"angle={angle:.2f}, "
+            #     f"area={area:.0f}"
+            # )
 
         return objects

@@ -54,6 +54,7 @@ from .motion_utils import MotionUtils
 from .target_manager import TargetManager
 from .motion_planner import MotionPlanner
 
+
 # ============================================================
 # Robot Configuration
 # ============================================================
@@ -76,9 +77,14 @@ OBJECT_X_OFFSET = 7.0
 OBJECT_Y_OFFSET = -5.0
 OBJECT_Z_OFFSET = -40.0
 
-TARGET_X_OFFSET = -35.0   
+# TARGET_X_OFFSET = -35.0   
+# TARGET_Y_OFFSET = 0.0   
+# TARGET_Z_OFFSET = 20.0
+
+TARGET_X_OFFSET = 0.0   
 TARGET_Y_OFFSET = 0.0   
-TARGET_Z_OFFSET = 20.0
+TARGET_Z_OFFSET = 0.0
+
 
 # ============================================================
 # Robot Tool Orientation
@@ -432,7 +438,16 @@ class AssemblyController(Node):
                 )
 
                 return
-
+            
+            self.get_logger().info(
+                f"[ROBOT POSE] "
+                f"x={pose_data[0]:.2f}, "
+                f"y={pose_data[1]:.2f}, "
+                f"z={pose_data[2]:.2f}, "
+                f"rx={pose_data[3]:.2f}, "
+                f"ry={pose_data[4]:.2f}, "
+                f"rz={pose_data[5]:.2f}"
+            )
 
             robot_pose = [
                 float(pose_data[0]),
@@ -796,6 +811,34 @@ class AssemblyController(Node):
 
 
         # ====================================================
+        # Freeze Box Target BEFORE Robot Motion
+        # ====================================================
+        #
+        # LV1 box is stationary.
+        # The eye-in-hand camera moves during pick, so box detections
+        # produced while the robot is moving must NOT replace the
+        # already-valid stationary box coordinate.
+        # ====================================================
+
+        fixed_target = {
+            "type": target.get("type", "target"),
+            "shape": target.get("shape", "box"),
+            "x": float(target["x"]),
+            "y": float(target["y"]),
+            "z": float(target["z"]),
+            "angle": float(target.get("angle", 0.0)),
+        }
+
+        self.get_logger().info(
+            f"[FIXED BOX TARGET] "
+            f"xyz=("
+            f"{fixed_target['x']:.2f}, "
+            f"{fixed_target['y']:.2f}, "
+            f"{fixed_target['z']:.2f})"
+        )
+
+
+        # ====================================================
         # Pick Object
         # ====================================================
 
@@ -808,34 +851,30 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # Important:
-        #
-        # Pick이 끝난 동안에도 box target은 움직일 수 있다.
-        #
-        # 현재 LV1에서는 정지 box이므로 latest_target을
-        # 다시 가져오기만 한다.
-        #
-        # 이후 moving target에서는 이 부분이:
-        #
-        # latest measurement
-        #       ↓
-        # velocity estimation
-        #       ↓
-        # prediction
-        #
-        # 으로 바뀐다.
+        # LV1: keep using the box coordinate captured before pick.
+        # Do NOT replace it with get_latest_target() after motion.
         # ====================================================
 
-        latest_target = self.get_latest_target()
-
-        if latest_target is not None:
-            target = latest_target
+        target = fixed_target
 
 
         # ====================================================
         # Target Pose
         # ====================================================
 
+
+        print("TARGET_X_OFFSET =", TARGET_X_OFFSET)
+        print("TARGET_Y_OFFSET =", TARGET_Y_OFFSET)
+        print("TARGET_Z_OFFSET =", TARGET_Z_OFFSET)
+
+        print(
+            "RAW TARGET =",
+            target["x"],
+            target["y"],
+            target["z"]
+        )
+
+        
         target_pose = [
             target["x"] + TARGET_X_OFFSET,
             target["y"] + TARGET_Y_OFFSET,
@@ -846,15 +885,48 @@ class AssemblyController(Node):
         ]
 
 
-        self.get_logger().info(
-            f"[TASK] Corrected box target pose: "
-            f"{target_pose}"
-        )
+        print("FINAL TARGET =", target_pose)
 
+
+        # ====================================================
+        # DEBUG: Final Drop Command
+        # ====================================================
+        #
+        # Vision에서 받은 target 좌표와
+        # 실제 drop_object()에 전달되는 좌표를 비교한다.
+        #
+        # 이상한 위치로 이동했을 때:
+        #
+        # [TARGET UPDATE]
+        #       ↓
+        # [DROP COMMAND]
+        #
+        # 두 좌표가 같은지 확인한다.
+        # ====================================================
+
+        self.get_logger().info(
+            f"[DROP COMMAND] "
+            f"target_xyz=("
+            f"{target['x']:.2f}, "
+            f"{target['y']:.2f}, "
+            f"{target['z']:.2f}), "
+            f"target_pose={target_pose}, "
+            f"approach_height={BOX_APPROACH_HEIGHT:.1f}, "
+            f"drop_height={BOX_DROP_HEIGHT:.1f}, "
+            f"retreat_height={BOX_RETREAT_HEIGHT:.1f}"
+        )
 
         # ====================================================
         # Drop Object Into Box
         # ====================================================
+        
+        self.get_logger().info(
+            f"[DROP INPUT] "
+            f"target_xyz=({target['x']:.2f}, "
+            f"{target['y']:.2f}, "
+            f"{target['z']:.2f}), "
+            f"target_pose={target_pose}"
+        )
 
         success = self.mu.drop_object(
             target_pose,

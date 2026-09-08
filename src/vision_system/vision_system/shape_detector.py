@@ -174,14 +174,14 @@ def classify_shape(contour):
 
     solidity = area / hull_area
 
-    print(
-        f"[SHAPE DEBUG] "
-        f"vertices={vertices}, "
-        f"area={area:.0f}, "
-        f"circularity={circularity:.2f}, "
-        f"solidity={solidity:.2f}, "
-        f"aspect_ratio={aspect_ratio:.2f}"
-    )
+    # print(
+    #     f"[SHAPE DEBUG] "
+    #     f"vertices={vertices}, "
+    #     f"area={area:.0f}, "
+    #     f"circularity={circularity:.2f}, "
+    #     f"solidity={solidity:.2f}, "
+    #     f"aspect_ratio={aspect_ratio:.2f}"
+    # )
 
     # =====================================================
     # Circle
@@ -283,14 +283,14 @@ def classify_object_shape(contour):
 
     solidity = area / hull_area
 
-    print(
-        f"[OBJECT SHAPE] "
-        f"vertices={vertices}, "
-        f"area={area:.0f}, "
-        f"circularity={circularity:.2f}, "
-        f"solidity={solidity:.2f}, "
-        f"aspect={aspect_ratio:.2f}"
-    )
+    # print(
+    #     f"[OBJECT SHAPE] "
+    #     f"vertices={vertices}, "
+    #     f"area={area:.0f}, "
+    #     f"circularity={circularity:.2f}, "
+    #     f"solidity={solidity:.2f}, "
+    #     f"aspect={aspect_ratio:.2f}"
+    # )
 
     # =====================================================
     # Circle
