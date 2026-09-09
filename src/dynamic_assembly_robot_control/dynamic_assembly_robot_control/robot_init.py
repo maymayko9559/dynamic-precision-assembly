@@ -223,10 +223,58 @@ class RobotInit:
         )
 
 
-    
+    # ========================================================
+    # Servo Linear - Absolute
+    # ========================================================
 
-    
+    def servo_linear_ABS(
+        self,
+        pos_target,
+        vel_linear=100.0,
+        vel_angular=20.0,
+        acc_linear=200.0,
+        acc_angular=100.0,
+        time_sec=None,
+    ):
 
+        from DSR_ROBOT2 import (
+            servol,
+            posx,
+        )
+
+        target_pos = posx(
+            pos_target
+        )
+
+        vel = [
+            float(vel_linear),
+            float(vel_angular),
+        ]
+
+        acc = [
+            float(acc_linear),
+            float(acc_angular),
+        ]
+
+        if time_sec is None:
+
+            result = servol(
+                target_pos,
+                vel=vel,
+                acc=acc,
+            )
+
+        else:
+
+            result = servol(
+                target_pos,
+                vel=vel,
+                acc=acc,
+                time=float(time_sec),
+            )
+
+        return result
+        
 
     # ========================================================
     # Request Current Robot Pose
