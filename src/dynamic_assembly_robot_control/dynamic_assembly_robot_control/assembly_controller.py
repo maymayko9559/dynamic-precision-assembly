@@ -41,6 +41,8 @@
 
 
 import rclpy
+import time
+import math
 
 from rclpy.node import Node
 
@@ -121,6 +123,23 @@ BOX_RETREAT_HEIGHT = 100.0
 
 
 # ============================================================
+# LV3 Constant-Velocity Following Configuration
+# ============================================================
+
+LV3_TRACKING_DURATION = 1.0
+LV3_MIN_MEASUREMENTS = 6
+
+# Approximate time used only for the initial intercept prediction.
+LV3_APPROACH_PREDICTION_TIME = 2.0
+
+# Desired vertical descent speed while following the moving box.
+DROP_Z_SPEED = 40.0       # [mm/s]
+
+# Cartesian acceleration for the diagonal following motion.
+MOVING_DROP_ACC = 40.0    # [mm/s^2]
+
+
+# ============================================================
 # Robot Home Position
 # ============================================================
 
@@ -133,6 +152,27 @@ HOME_JOINT = [
     0.0,    # J6
 ]
 
+# ============================================================
+# Camera View Poses
+# ============================================================
+
+BOARD_TRACKING_POSE = [
+    -279.86,
+    -474.66,
+    362.31,
+    65.95,
+    -178.16,
+    157.31
+]
+
+OBJECT_VIEW_POSE = [
+    363.80,
+    -12.77,
+    396.74,
+    15.18,
+    179.83,
+    15.33
+]
 
 # ============================================================
 # Assembly Controller
@@ -202,6 +242,12 @@ class AssemblyController(Node):
 
         self.latest_target_time = None
 
+        # ========================================================
+        # 3-1. Target Tracking Gate
+        # ========================================================
+
+        self.target_tracking_enabled = False
+
 
         # ========================================================
         # 4. Current Joint State
@@ -250,7 +296,9 @@ class AssemblyController(Node):
         self.target_manager = TargetManager(
             node=self,
             history_size=20,
-            stale_timeout=0.5,
+            stale_timeout=1.0,
+            velocity_window=10,
+            min_velocity_samples=4,
         )
 
 
@@ -556,6 +604,9 @@ class AssemblyController(Node):
 
         if object_type == "target":
 
+            if not self.target_tracking_enabled:
+                return
+
             # ----------------------------------------------------
             # TargetManager Update
             # ----------------------------------------------------
@@ -707,31 +758,12 @@ class AssemblyController(Node):
         self,
         shape
     ):
-        """
-        Current LV1 task:
-
-        1. Get detected object
-        2. Get latest box center
-        3. Pick object
-        4. Move above box
-        5. Drop object into box
-
-        No shape matching.
-        No orientation alignment.
-        No insertion.
-        """
-
 
         # ====================================================
-        # Get Object + Box Target
+        # 1. Get detected object
         # ====================================================
 
-        obj, target = self.get_pick_and_box_target(
-            shape
-        )
-
-
-        if obj is None:
+        if shape not in self.objects:
 
             self.get_logger().warning(
                 f"{shape} object is not detected."
@@ -740,108 +772,40 @@ class AssemblyController(Node):
             return False
 
 
-        if target is None:
-
-            self.get_logger().warning(
-                "Box target is not detected."
-            )
-
-            return False
+        obj = self.objects[shape]
 
 
         # ====================================================
-        # Debug Information
+        # 2. Freeze object position
         # ====================================================
 
-        self.get_logger().info(
-            "========================================"
-        )
+        fixed_object = {
+            "type": obj["type"],
+            "shape": obj["shape"],
+            "x": float(obj["x"]),
+            "y": float(obj["y"]),
+            "z": float(obj["z"]),
+            "angle": float(obj["angle"]),
+        }
 
-        self.get_logger().info(
-            f"[TASK] Pick object: {shape}"
-        )
-
-        self.get_logger().info(
-            f"[TASK] Object position: "
-            f"({obj['x']:.2f}, "
-            f"{obj['y']:.2f}, "
-            f"{obj['z']:.2f})"
-        )
-
-        self.get_logger().info(
-            f"[TASK] Box center: "
-            f"({target['x']:.2f}, "
-            f"{target['y']:.2f}, "
-            f"{target['z']:.2f})"
-        )
-
-        self.get_logger().info(
-            f"[TASK] Target shape(meta): "
-            f"{target['shape']}"
-        )
-
-
-        target_age = self.get_target_age()
-
-        if target_age is not None:
-
-            self.get_logger().info(
-                f"[TASK] Target measurement age: "
-                f"{target_age:.3f} sec"
-            )
-
-
-        # ====================================================
-        # Object Pose
-        # ====================================================
 
         object_pose = [
-            obj["x"] + OBJECT_X_OFFSET,
-            obj["y"] + OBJECT_Y_OFFSET,
-            obj["z"] + OBJECT_Z_OFFSET,
+            fixed_object["x"] + OBJECT_X_OFFSET,
+            fixed_object["y"] + OBJECT_Y_OFFSET,
+            fixed_object["z"] + OBJECT_Z_OFFSET,
             TOOL_RX,
             TOOL_RY,
             TOOL_RZ,
         ]
 
 
-        self.get_logger().info(
-            f"[TASK] Corrected object pose: "
-            f"{object_pose}"
-        )
-
-
         # ====================================================
-        # Freeze Box Target BEFORE Robot Motion
+        # 3. Pick
         # ====================================================
-        #
-        # LV1 box is stationary.
-        # The eye-in-hand camera moves during pick, so box detections
-        # produced while the robot is moving must NOT replace the
-        # already-valid stationary box coordinate.
-        # ====================================================
-
-        fixed_target = {
-            "type": target.get("type", "target"),
-            "shape": target.get("shape", "box"),
-            "x": float(target["x"]),
-            "y": float(target["y"]),
-            "z": float(target["z"]),
-            "angle": float(target.get("angle", 0.0)),
-        }
 
         self.get_logger().info(
-            f"[FIXED BOX TARGET] "
-            f"xyz=("
-            f"{fixed_target['x']:.2f}, "
-            f"{fixed_target['y']:.2f}, "
-            f"{fixed_target['z']:.2f})"
+            f"[TASK] Pick object: {shape}"
         )
-
-
-        # ====================================================
-        # Pick Object
-        # ====================================================
 
         self.mu.pick_up(
             object_pose,
@@ -852,110 +816,451 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # LV1: keep using the box coordinate captured before pick.
-        # Do NOT replace it with get_latest_target() after motion.
+        # 4. Move to Board Tracking Pose
         # ====================================================
 
-        target = fixed_target
+        self.target_tracking_enabled = False
 
-
-        # ====================================================
-        # Target Pose
-        # ====================================================
-
-
-        print("TARGET_X_OFFSET =", TARGET_X_OFFSET)
-        print("TARGET_Y_OFFSET =", TARGET_Y_OFFSET)
-        print("TARGET_Z_OFFSET =", TARGET_Z_OFFSET)
-
-        print(
-            "RAW TARGET =",
-            target["x"],
-            target["y"],
-            target["z"]
+        self.get_logger().info(
+            "[TASK] Moving to board tracking pose..."
         )
 
-        
-        target_pose = [
-            target["x"] + TARGET_X_OFFSET,
-            target["y"] + TARGET_Y_OFFSET,
-            target["z"] + TARGET_Z_OFFSET,
+        self.robot_init.move_linear_ABS(
+            BOARD_TRACKING_POSE,
+            vel=40,
+            acc=50
+        )
+
+
+        # ====================================================
+        # 5. Stabilize robot pose before using ArUco target
+        # ====================================================
+
+        self.get_logger().info(
+            "[TASK] Board tracking pose reached. "
+            "Waiting for stabilization..."
+        )
+
+        settle_end = time.monotonic() + 0.8
+
+        while rclpy.ok() and time.monotonic() < settle_end:
+            rclpy.spin_once(
+                self,
+                timeout_sec=0.05
+            )
+
+
+        # ====================================================
+        # 6. Start NEW ArUco / Box Target Tracking
+        # ====================================================
+
+        self.latest_target = None
+        self.latest_target_time = None
+        self.targets.clear()
+        self.target_manager.clear()
+
+        self.target_tracking_enabled = True
+
+        self.get_logger().info(
+            "[TASK] ArUco box tracking ENABLED."
+        )
+
+        # ====================================================
+        # 7. Collect Moving Box Measurements
+        # ====================================================
+
+        tracking_start = time.monotonic()
+
+        while rclpy.ok():
+
+            rclpy.spin_once(
+                self,
+                timeout_sec=0.05
+            )
+
+            elapsed = (
+                time.monotonic()
+                - tracking_start
+            )
+
+            enough_time = (
+                elapsed
+                >= LV3_TRACKING_DURATION
+            )
+
+            enough_samples = (
+                self.target_manager.get_history_count()
+                >= LV3_MIN_MEASUREMENTS
+            )
+
+            if (
+                enough_time
+                and enough_samples
+            ):
+                break
+
+
+        if not self.target_manager.has_target():
+
+            self.get_logger().warning(
+                "[LV3] Box target was not detected."
+            )
+
+            return False
+
+
+        # ====================================================
+        # 8. Estimate Velocity
+        # ====================================================
+
+        vx, vy, vz = (
+            self.target_manager.get_velocity()
+        )
+
+        self.get_logger().info(
+            f"[LV3 VELOCITY] "
+            f"vx={vx:.2f}, "
+            f"vy={vy:.2f}, "
+            f"vz={vz:.2f} mm/s"
+        )
+
+
+        # ====================================================
+        # 9. Predict Initial Approach Target
+        # ====================================================
+        #
+        # Box velocity is assumed constant.
+        # We first predict where the box will be when the robot
+        # reaches the initial approach area.
+        # ====================================================
+
+        approach_target = (
+            self.target_manager.predict_from_now(
+                future_time=LV3_APPROACH_PREDICTION_TIME
+            )
+        )
+
+        if approach_target is None:
+
+            self.get_logger().error(
+                "[LV3] Cannot predict approach target."
+            )
+
+            return False
+
+
+        approach_pose = [
+            approach_target["x"] + TARGET_X_OFFSET,
+            approach_target["y"] + TARGET_Y_OFFSET,
+            approach_target["z"]
+                + TARGET_Z_OFFSET
+                + BOX_APPROACH_HEIGHT,
             TOOL_RX,
             TOOL_RY,
             TOOL_RZ,
         ]
 
 
-        print("FINAL TARGET =", target_pose)
-
-
-        # ====================================================
-        # DEBUG: Final Drop Command
-        # ====================================================
-        #
-        # Vision에서 받은 target 좌표와
-        # 실제 drop_object()에 전달되는 좌표를 비교한다.
-        #
-        # 이상한 위치로 이동했을 때:
-        #
-        # [TARGET UPDATE]
-        #       ↓
-        # [DROP COMMAND]
-        #
-        # 두 좌표가 같은지 확인한다.
-        # ====================================================
-
         self.get_logger().info(
-            f"[DROP COMMAND] "
-            f"target_xyz=("
-            f"{target['x']:.2f}, "
-            f"{target['y']:.2f}, "
-            f"{target['z']:.2f}), "
-            f"target_pose={target_pose}, "
-            f"approach_height={BOX_APPROACH_HEIGHT:.1f}, "
-            f"drop_height={BOX_DROP_HEIGHT:.1f}, "
-            f"retreat_height={BOX_RETREAT_HEIGHT:.1f}"
+            f"[LV3 APPROACH TARGET] "
+            f"xyz=("
+            f"{approach_pose[0]:.2f}, "
+            f"{approach_pose[1]:.2f}, "
+            f"{approach_pose[2]:.2f})"
         )
+
 
         # ====================================================
-        # Drop Object Into Box
+        # 10. Freeze Vision Tracking During Robot Motion
         # ====================================================
-        
-        self.get_logger().info(
-            f"[DROP INPUT] "
-            f"target_xyz=({target['x']:.2f}, "
-            f"{target['y']:.2f}, "
-            f"{target['z']:.2f}), "
-            f"target_pose={target_pose}"
+
+        self.target_tracking_enabled = False
+
+
+        # ====================================================
+        # 11. Record Box State Before Robot Motion
+        # ====================================================
+
+        box_start = (
+            self.target_manager.predict_from_now(
+                future_time=0.0
+            )
         )
 
-        success = self.mu.drop_object(
-            target_pose,
-            approach_height=BOX_APPROACH_HEIGHT,
-            drop_height=BOX_DROP_HEIGHT,
-            retreat_height=BOX_RETREAT_HEIGHT,
-        )
-
-
-        if not success:
+        if box_start is None:
 
             self.get_logger().error(
-                "[TASK] Drop failed."
+                "[LV3] Cannot get current box state."
             )
 
             return False
 
 
+        box_start_x = float(box_start["x"])
+        box_start_y = float(box_start["y"])
+        box_start_z = float(box_start["z"])
+
+
+        # ====================================================
+        # 12. Move To Predicted Approach Point
+        # ====================================================
+
+        approach_start_time = time.monotonic()
+
+        self.robot_init.move_linear_ABS(
+            approach_pose,
+            vel=40,
+            acc=50
+        )
+
+        approach_elapsed = (
+            time.monotonic()
+            - approach_start_time
+        )
+
+
         self.get_logger().info(
-            f"[TASK] {shape} -> BOX completed."
+            f"[LV3 APPROACH TIME] "
+            f"{approach_elapsed:.3f} sec"
+        )
+
+
+        # ====================================================
+        # 13. Predict Box Position At Actual Approach Arrival
+        # ====================================================
+
+        current_box_x = (
+            box_start_x
+            + vx * approach_elapsed
+        )
+
+        current_box_y = (
+            box_start_y
+            + vy * approach_elapsed
+        )
+
+        current_box_z = box_start_z
+
+
+        self.get_logger().info(
+            f"[LV3 BOX AT APPROACH] "
+            f"xyz=("
+            f"{current_box_x:.2f}, "
+            f"{current_box_y:.2f}, "
+            f"{current_box_z:.2f})"
+        )
+
+
+        # ====================================================
+        # 14. Reposition Above Predicted Current Box Position
+        # ====================================================
+
+        follow_start_pose = [
+            current_box_x + TARGET_X_OFFSET,
+            current_box_y + TARGET_Y_OFFSET,
+            current_box_z
+                + TARGET_Z_OFFSET
+                + BOX_APPROACH_HEIGHT,
+            TOOL_RX,
+            TOOL_RY,
+            TOOL_RZ,
+        ]
+
+        correction_start = time.monotonic()
+
+        self.robot_init.move_linear_ABS(
+            follow_start_pose,
+            vel=40,
+            acc=50
+        )
+
+        correction_elapsed = (
+            time.monotonic()
+            - correction_start
+        )
+
+
+        # Box keeps moving during correction.
+        current_box_x += (
+            vx * correction_elapsed
+        )
+
+        current_box_y += (
+            vy * correction_elapsed
+        )
+
+
+        self.get_logger().info(
+            f"[LV3 CORRECTION TIME] "
+            f"{correction_elapsed:.3f} sec"
         )
 
         self.get_logger().info(
-            "========================================"
+            f"[LV3 BOX BEFORE DESCENT] "
+            f"xyz=("
+            f"{current_box_x:.2f}, "
+            f"{current_box_y:.2f}, "
+            f"{current_box_z:.2f})"
+        )
+
+
+        # ====================================================
+        # 15. Calculate Descent Time
+        # ====================================================
+
+        approach_z = (
+            current_box_z
+            + TARGET_Z_OFFSET
+            + BOX_APPROACH_HEIGHT
+        )
+
+        drop_z = (
+            current_box_z
+            + TARGET_Z_OFFSET
+            + BOX_DROP_HEIGHT
+        )
+
+        vertical_distance = abs(
+            approach_z
+            - drop_z
+        )
+
+        if DROP_Z_SPEED <= 0.0:
+
+            self.get_logger().error(
+                "[LV3] DROP_Z_SPEED must be > 0."
+            )
+
+            return False
+
+        descent_time = (
+            vertical_distance
+            / DROP_Z_SPEED
+        )
+
+
+        # ====================================================
+        # 16. Calculate Moving Drop Endpoint
+        # ====================================================
+
+        delta_x = (
+            vx
+            * descent_time
+        )
+
+        delta_y = (
+            vy
+            * descent_time
+        )
+
+        drop_pose = [
+            current_box_x
+                + delta_x
+                + TARGET_X_OFFSET,
+
+            current_box_y
+                + delta_y
+                + TARGET_Y_OFFSET,
+
+            drop_z,
+
+            TOOL_RX,
+            TOOL_RY,
+            TOOL_RZ,
+        ]
+
+
+        # ====================================================
+        # 17. Calculate Cartesian Path Velocity
+        # ====================================================
+        #
+        # Desired velocity vector:
+        # [vx, vy, -DROP_Z_SPEED]
+        #
+        # No min/max clamp: changing the total path speed would
+        # change the XY velocity components relative to the box.
+        # ====================================================
+
+        moving_drop_vel = math.sqrt(
+            vx * vx
+            + vy * vy
+            + DROP_Z_SPEED * DROP_Z_SPEED
+        )
+
+
+        self.get_logger().info(
+            f"[LV3 FOLLOW DROP] "
+            f"vx={vx:.2f}, "
+            f"vy={vy:.2f}, "
+            f"vz_drop={DROP_Z_SPEED:.2f}, "
+            f"path_vel={moving_drop_vel:.2f}"
+        )
+
+        self.get_logger().info(
+            f"[LV3 DROP TIME] "
+            f"distance_z={vertical_distance:.2f} mm, "
+            f"time={descent_time:.3f} sec"
+        )
+
+        self.get_logger().info(
+            f"[LV3 DROP ENDPOINT] "
+            f"xyz=("
+            f"{drop_pose[0]:.2f}, "
+            f"{drop_pose[1]:.2f}, "
+            f"{drop_pose[2]:.2f})"
+        )
+
+
+        # ====================================================
+        # 18. Follow Box While Descending
+        # ====================================================
+
+        self.robot_init.move_linear_ABS(
+            drop_pose,
+            vel=moving_drop_vel,
+            acc=MOVING_DROP_ACC
+        )
+
+
+        # ====================================================
+        # 19. Release Object
+        # ====================================================
+
+        self.get_logger().info(
+            "[LV3 DROP] Releasing object."
+        )
+
+        self.robot_init.open_gripper()
+
+        time.sleep(0.3)
+
+
+        # ====================================================
+        # 20. Retreat
+        # ====================================================
+
+        retreat_pose = [
+            drop_pose[0],
+            drop_pose[1],
+            current_box_z
+                + TARGET_Z_OFFSET
+                + BOX_RETREAT_HEIGHT,
+            TOOL_RX,
+            TOOL_RY,
+            TOOL_RZ,
+        ]
+
+        self.robot_init.move_linear_ABS(
+            retreat_pose,
+            vel=40,
+            acc=50
+        )
+
+        self.get_logger().info(
+            "[LV3 DROP] Constant-velocity following drop completed."
         )
 
         return True
-
 
     # ========================================================
     # Joint State Callback
@@ -1151,7 +1456,7 @@ def main(args=None):
     try:
 
         node.robot_init.move_linear_ABS(
-            [363.80, -12.77, 396.74, 15.18, 179.83, 15.33], vel=20, acc=20
+            OBJECT_VIEW_POSE, vel=40, acc=50
         )
 
         # ====================================================
@@ -1174,20 +1479,21 @@ def main(args=None):
         shape = voice_handler.keyword
 
         node.get_logger().info(
-            f"{shape} object + box target "
-            f"검출 대기 중..."
+            f"{shape} object 검출 대기 중..."
         )
         if not shape:
-            node.get_logger().error(
+            node.get_logger().warn(
                 "음성 인식 실패: 도형을 선택하지 못했습니다.-작업중단"
             )
-            return
+            shape = "circle"
 
 
 
         # ====================================================
-        # Wait for Object + ANY Target
+        # Wait for Object ONLY
         # ====================================================
+
+        node.target_tracking_enabled = False
 
         while rclpy.ok():
 
@@ -1196,19 +1502,7 @@ def main(args=None):
                 timeout_sec=0.1
             )
 
-
-            obj, target = (
-                node.get_pick_and_box_target(
-                    shape
-                )
-            )
-
-
-            if (
-                obj is not None
-                and target is not None
-            ):
-
+            if shape in node.objects:
                 break
 
 
