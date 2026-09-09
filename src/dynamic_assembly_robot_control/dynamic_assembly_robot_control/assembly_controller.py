@@ -827,8 +827,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_linear_ABS(
             BOARD_TRACKING_POSE,
-            vel=20,
-            acc=20
+            vel=40,
+            acc=50
         )
 
 
@@ -1009,8 +1009,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_linear_ABS(
             approach_pose,
-            vel=20,
-            acc=20
+            vel=40,
+            acc=50
         )
 
         approach_elapsed = (
@@ -1070,8 +1070,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_linear_ABS(
             follow_start_pose,
-            vel=20,
-            acc=20
+            vel=40,
+            acc=50
         )
 
         correction_elapsed = (
@@ -1252,8 +1252,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_linear_ABS(
             retreat_pose,
-            vel=20,
-            acc=20
+            vel=40,
+            acc=50
         )
 
         self.get_logger().info(
@@ -1456,7 +1456,7 @@ def main(args=None):
     try:
 
         node.robot_init.move_linear_ABS(
-            OBJECT_VIEW_POSE, vel=40, acc=20
+            OBJECT_VIEW_POSE, vel=40, acc=50
         )
 
         # ====================================================
