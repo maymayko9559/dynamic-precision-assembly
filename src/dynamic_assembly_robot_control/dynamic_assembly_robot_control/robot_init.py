@@ -169,7 +169,9 @@ class RobotInit:
         self,
         pos_target,
         vel=20,
-        acc=20
+        acc=20,
+        radius=None,
+        log=True
     ):
 
         from DSR_ROBOT2 import (
@@ -180,15 +182,20 @@ class RobotInit:
 
         target_pos = posx(pos_target)
 
-        self.node.get_logger().info(
-            f"절대좌표 이동: {target_pos}"
-        )
+        if log:
+            self.node.get_logger().info(
+                f"절대좌표 이동: {target_pos}"
+            )
+
+        kwargs = dict(vel=vel, acc=acc, mod=DR_MV_MOD_ABS)
+
+        # radius > 0 이면 목표에 완전히 멈추지 않고 블렌드 -> 연속 추종 이동에 사용
+        if radius is not None and radius > 0.0:
+            kwargs["radius"] = float(radius)
 
         movel(
             target_pos,
-            vel=vel,
-            acc=acc,
-            mod=DR_MV_MOD_ABS
+            **kwargs
         )
 
 

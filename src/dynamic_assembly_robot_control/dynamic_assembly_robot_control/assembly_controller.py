@@ -43,18 +43,22 @@
 import rclpy
 import time
 import math
+import threading
 
 from rclpy.node import Node
+from rclpy.executors import MultiThreadedExecutor
 
 from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Empty
 #from sensor_msgs.msg import JointState
+
+from dsr_msgs2.srv import GetCurrentPosx
 
 from assembly_interfaces.msg import DetectedObject
 from assembly_interfaces.msg import PredictedTarget
 
 from .robot_init import RobotInit
 from .motion_utils import MotionUtils
-from .target_manager import TargetManager
 from .motion_planner import MotionPlanner
 from .voice_motion_handler import VoiceMotionHandler
 
@@ -113,12 +117,10 @@ PICK_APPROACH_HEIGHT = 80.0
 
 BOX_APPROACH_HEIGHT = 100.0
 
-# Box target Z보다 어느 정도 위에서 release할지.
-#
-# IMPORTANT:
-# 실제 box 높이 / target Z 정의에 맞춰
-# 실험 후 조정해야 한다.
-BOX_DROP_HEIGHT = 40.0
+# tracking 된 box Z 기준, 이만큼 "위"에서 그리퍼를 연다. 음수면 그 아래.
+# 툴 장착 후 8cm 위로 조정: -110 -> -30.
+# 부딪히면 올리고(값 ↑), 덜 들어가면 더 내린다(값 ↓).
+BOX_DROP_HEIGHT = -30.0
 
 BOX_RETREAT_HEIGHT = 100.0
 
@@ -127,17 +129,33 @@ BOX_RETREAT_HEIGHT = 100.0
 # LV3 Constant-Velocity Following Configuration
 # ============================================================
 
-LV3_TRACKING_DURATION = 1.0
-LV3_MIN_MEASUREMENTS = 6
+# fix 를 잡는 시간. 짧으면 빨리 시작하지만 KF 속도(vx,vy)가 아직
+# 수렴 전이라 "따라가면서 내려놓기" 가 안 된다. 1초는 줘야 속도가 선다.
+LV3_TRACKING_DURATION = 1.0   # [s] 최소 수집 시간
+LV3_MIN_MEASUREMENTS = 8      # coast 작은 메시지 이만큼 쌓이면 진행
+
+# tracking_node.PredictedTarget.coast 가 이 값보다 크면
+# "상자를 지금 안 보고 등속 예측만 하는 중" -> 신뢰하지 않는다.
+# ArUco 검출이 좀 끊겨도 최근에 봤으면 통과하도록 살짝 완화.
+LV3_MAX_COAST = 0.6          # [s]
+
+# 이 안에 fix 를 못 잡으면: target 이 아예 없으면 중단,
+# 있는데 조금 오래됐을 뿐이면 경고 후 진행 (follow 루프가 재획득함).
+LV3_TRACKING_TIMEOUT = 6.0   # [s]
+LV3_TIMEOUT_ACCEPT_COAST = 2.0   # [s] 타임아웃 시 이 이하 coast 면 그냥 진행
+
+# 추정 XY 속도가 이 미만이면 "정지 상자" 로 보고 vx=vy=0 (따라가기 OFF).
+# 벨트가 느리면(예: 20~30mm/s) 이 값이 크면 실제 이동을 죽여버리므로 낮게.
+LV3_STATIC_SPEED = 5.0       # [mm/s]
 
 # Approximate time used only for the initial intercept prediction.
 LV3_APPROACH_PREDICTION_TIME = 2.0
 
-# Desired vertical descent speed while following the moving box.
-DROP_Z_SPEED = 40.0       # [mm/s]
-
-# Cartesian acceleration for the diagonal following motion.
-MOVING_DROP_ACC = 40.0    # [mm/s^2]
+# Descent (step 18): 한 번의 연속 movel 로 approach_z -> drop_z 까지 내려가며
+# XY 는 [vx, vy, -DROP_Z_SPEED] 방향으로 이동 -> 내려가는 내내 상자를 따라감.
+# acc 가 낮으면 가감속 구간에서 상자를 놓치므로 넉넉히.
+DROP_Z_SPEED = 40.0       # [mm/s] 수직 하강 속도 (빠르게 하려면 ↑)
+MOVING_DROP_ACC = 300.0   # [mm/s^2]
 
 
 # ============================================================
@@ -176,12 +194,253 @@ OBJECT_VIEW_POSE = [
 ]
 
 # ============================================================
+# Shared State  (SensorNode <-> AssemblyController)
+# ============================================================
+#
+# SensorNode(백그라운드 executor 스레드)가 쓰고,
+# AssemblyController(메인 스레드, 블로킹 movel)가 읽는다.
+# 두 스레드가 동시에 건드리므로 lock 으로 보호한다.
+# ============================================================
+
+class TargetState:
+
+    def __init__(self):
+        self.lock = threading.Lock()
+
+        # shape -> object dict  (pick 대상)
+        self.objects = {}
+        # shape -> target dict  (future shape-matching 용)
+        self.targets = {}
+
+        # 마지막 PredictedTarget 스냅샷
+        self.latest_target = None
+        self.latest_target_time = None      # rclpy.time.Time
+
+        # tracking 재시작 이후 받은 target 메시지 수 (수렴 대기용)
+        self.target_rx_count = 0
+        # 그 중 coast <= LV3_MAX_COAST (상자를 실제로 보고 있는) 메시지 수
+        self.fresh_rx_count = 0
+
+        # run_pick_and_drop 이 로봇 이동 중 tracking 을 얼릴 때 사용
+        self.tracking_enabled = False
+
+    def reset_target(self):
+        with self.lock:
+            self.latest_target = None
+            self.latest_target_time = None
+            self.target_rx_count = 0
+            self.fresh_rx_count = 0
+            self.targets.clear()
+
+
+# ============================================================
+# Sensor Node
+# ============================================================
+#
+# 목적: AssemblyController 가 블로킹 movel 로 멈춰 있는 동안에도
+#       - /robot/current_pose 를 계속 발행 (vision_manager 가 eye-in-hand
+#         변환에 사용 -> 이동 중 stale pose 문제 제거)
+#       - /tracking/predicted_target, /vision/detected_object 콜백을 계속 처리
+#       해야 한다.
+#
+# 그래서 이 노드만 MultiThreadedExecutor 로 백그라운드에서 spin 한다.
+# DSR_ROBOT2 모션 함수(movel 등)는 g_node(AssemblyController)를 직접
+# spin_until_future_complete 하므로, 그 노드는 executor 에 넣지 않는다.
+# 이 노드는 DSR wrapper 를 쓰지 않고 raw async 서비스 클라이언트만 쓴다.
+# ============================================================
+
+class SensorNode(Node):
+
+    def __init__(self, state: TargetState):
+
+        super().__init__(
+            "assembly_sensor_node",
+            namespace=ROBOT_ID
+        )
+
+        self.state = state
+
+        # ----- 구독 -----
+        self.object_sub = self.create_subscription(
+            DetectedObject,
+            "/vision/detected_object",
+            self.object_callback,
+            10
+        )
+
+        self.target_sub = self.create_subscription(
+            PredictedTarget,
+            "/tracking/predicted_target",
+            self.target_callback,
+            10
+        )
+
+        # ----- 로봇 pose 발행 -----
+        self.robot_pose_pub = self.create_publisher(
+            Float64MultiArray,
+            "/robot/current_pose",
+            10
+        )
+
+        self.posx_client = self.create_client(
+            GetCurrentPosx,
+            "/dsr01/dsr_controller2/aux_control/get_current_posx"
+        )
+
+        self.pose_request_pending = False
+
+        self.pose_timer = self.create_timer(
+            0.1,                       # 10 Hz
+            self.request_robot_pose
+        )
+
+        self.get_logger().info(
+            "SensorNode: object/target 구독 + /robot/current_pose 발행 시작"
+        )
+
+    # --------------------------------------------------------
+    # Object Callback  (vision_manager -> /vision/detected_object)
+    # --------------------------------------------------------
+    #
+    # 이 토픽엔 type="target"(box)도 오지만 box 위치는 tracking_node 것을
+    # 쓰므로 여기서는 무시한다.
+    # --------------------------------------------------------
+
+    def object_callback(self, msg: DetectedObject):
+
+        if msg.type != "object":
+            return
+
+        info = {
+            "type": "object",
+            "shape": msg.shape,
+            "x": float(msg.x),
+            "y": float(msg.y),
+            "z": float(msg.z),
+            "angle": float(msg.angle),
+        }
+
+        with self.state.lock:
+            self.state.objects[msg.shape] = info
+
+        self.get_logger().info(
+            f"[OBJECT UPDATE] shape={msg.shape}, "
+            f"xyz=({info['x']:.1f}, {info['y']:.1f}, {info['z']:.1f}), "
+            f"angle={info['angle']:.1f}",
+            throttle_duration_sec=0.5,
+        )
+
+    # --------------------------------------------------------
+    # Target Callback  (tracking_node -> /tracking/predicted_target)
+    # --------------------------------------------------------
+    #
+    # tracking_node(칼만필터) 결과를 스냅샷으로 저장만 한다.
+    # 별도 필터/속도추정 없음.
+    # --------------------------------------------------------
+
+    def target_callback(self, msg: PredictedTarget):
+
+        if not self.state.tracking_enabled:
+            return
+
+        coast = float(msg.coast)
+        valid = bool(msg.valid)
+
+        info = {
+            "shape": msg.shape,
+            "x": float(msg.x),
+            "y": float(msg.y),
+            "z": float(msg.z),
+            "angle": float(msg.angle),
+            "vx": float(msg.vx),
+            "vy": float(msg.vy),
+            "vz": float(msg.vz),
+            "prediction_time": float(msg.prediction_time),
+            "coast": coast,
+            "valid": valid,
+        }
+
+        with self.state.lock:
+            self.state.targets[msg.shape] = info
+            self.state.latest_target = info
+            self.state.latest_target_time = self.get_clock().now()
+            self.state.target_rx_count += 1
+            if valid and coast <= LV3_MAX_COAST:
+                self.state.fresh_rx_count += 1
+
+        self.get_logger().info(
+            f"[TARGET UPDATE] shape={info['shape']}, "
+            f"xyz=({info['x']:.1f}, {info['y']:.1f}, {info['z']:.1f}), "
+            f"vel=({info['vx']:.1f}, {info['vy']:.1f}, {info['vz']:.1f}) mm/s, "
+            f"coast={coast:.2f}s",
+            throttle_duration_sec=0.5,
+        )
+
+    # --------------------------------------------------------
+    # Robot Pose  (raw async 서비스, DSR wrapper 미사용)
+    # --------------------------------------------------------
+
+    def request_robot_pose(self):
+
+        if self.pose_request_pending:
+            return
+
+        if not self.posx_client.service_is_ready():
+            self.get_logger().warning(
+                "Waiting for get_current_posx service...",
+                throttle_duration_sec=2.0
+            )
+            return
+
+        req = GetCurrentPosx.Request()
+        req.ref = 0        # DR_BASE
+
+        future = self.posx_client.call_async(req)
+        future.add_done_callback(self.robot_pose_response)
+        self.pose_request_pending = True
+
+    def robot_pose_response(self, future):
+
+        self.pose_request_pending = False
+
+        try:
+            response = future.result()
+
+            if not response.success:
+                self.get_logger().warning(
+                    "Failed to get current robot pose.",
+                    throttle_duration_sec=2.0
+                )
+                return
+
+            if len(response.task_pos_info) == 0:
+                self.get_logger().warning(
+                    "Current robot pose is empty.",
+                    throttle_duration_sec=2.0
+                )
+                return
+
+            pose_data = response.task_pos_info[0].data
+
+            if len(pose_data) < 6:
+                self.get_logger().warning("Invalid current robot pose data.")
+                return
+
+            msg = Float64MultiArray()
+            msg.data = [float(pose_data[i]) for i in range(6)]
+            self.robot_pose_pub.publish(msg)
+
+        except Exception as e:
+            self.get_logger().error(f"Failed to get robot pose: {e}")
+
+
+# ============================================================
 # Assembly Controller
 # ============================================================
 
 class AssemblyController(Node):
 
-    def __init__(self):
+    def __init__(self, state: TargetState):
 
         super().__init__(
             "assembly_controller",
@@ -190,64 +449,30 @@ class AssemblyController(Node):
 
 
         # ========================================================
-        # 1. Detected Objects
+        # 1~3. Shared state  (SensorNode 가 채운다)
         # ========================================================
         #
-        # Shape별 최신 object 저장
+        # objects / targets / latest_target / latest_target_time /
+        # target_rx_count / tracking_enabled 는 전부 TargetState 안에 있고
+        # lock 으로 보호된다. (SensorNode 스레드가 write, 여기서 read)
         #
-        # Example:
+        #   state.objects[shape]       = {type,shape,x,y,z,angle}
+        #   state.latest_target        = {shape,x,y,z,angle,vx,vy,vz,prediction_time}
         #
-        # self.objects["circle"] = {
-        #     "type": "object",
-        #     "shape": "circle",
-        #     "x": ...,
-        #     "y": ...,
-        #     "z": ...,
-        #     "angle": ...
-        # }
-        #
+        # 위치/속도/미래예측은 아래 헬퍼(get_velocity / predict_target_from_now)가
+        # 이 스냅샷 하나로 수행한다. (기존 TargetManager 역할 = tracking_node + 스냅샷)
         # ========================================================
 
-        self.objects = {}
+        self.state = state
 
+        # 기존 코드 호환용 alias (같은 dict 객체를 가리킴)
+        self.objects = state.objects
+        self.targets = state.targets
 
-        # ========================================================
-        # 2. Detected Targets
-        # ========================================================
-        #
-        # 현재 task에서는 shape matching을 사용하지 않는다.
-        #
-        # 하지만 future use를 위해
-        # shape별 target 정보도 유지한다.
-        #
-        # ========================================================
-
-        self.targets = {}
-
-
-        # ========================================================
-        # 3. Latest Box Target
-        # ========================================================
-        #
-        # 현재 task:
-        #
-        # 가장 최근에 검출된 target을
-        # Box Center로 사용한다.
-        #
-        # ArUco가 로봇에 의해 잠시 가려져도
-        # 마지막 target을 바로 삭제하지 않는다.
-        #
-        # ========================================================
-
-        self.latest_target = None
-
-        self.latest_target_time = None
-
-        # ========================================================
-        # 3-1. Target Tracking Gate
-        # ========================================================
-
-        self.target_tracking_enabled = False
+        # tracking_node 필터 리셋 채널 (publisher 는 spin 없이도 동작)
+        self.tracking_reset_pub = self.create_publisher(
+            Empty, "/tracking/reset", 10
+        )
 
 
         # ========================================================
@@ -276,31 +501,14 @@ class AssemblyController(Node):
 
 
         # ========================================================
-        # 6. Target Manager
+        # 6. Target estimation
         # ========================================================
         #
-        # TargetManager:
-        #
-        # - latest target
-        # - target history
-        # - velocity estimation
-        # - target freshness
-        #
-        # LV1:
-        # velocity는 계산만 하고 robot control에는 사용하지 않음.
-        #
-        # LV3:
-        # moving box prediction에 사용.
-        #
+        # TargetManager 제거됨.
+        # 위치/속도/미래예측은 tracking_node 의 칼만필터가 담당하고,
+        # 이 노드는 그 결과(PredictedTarget)를 스냅샷으로 받아
+        # get_velocity() / predict_target_from_now() 로만 사용한다.
         # ========================================================
-
-        self.target_manager = TargetManager(
-            node=self,
-            history_size=20,
-            stale_timeout=1.0,
-            velocity_window=10,
-            min_velocity_samples=4,
-        )
 
 
         # ========================================================
@@ -345,81 +553,14 @@ class AssemblyController(Node):
 
 
         # ========================================================
-        # 9. Detection Subscribers
+        # 9. Detection 구독 / 로봇 pose 발행 -> SensorNode 로 이동
         # ========================================================
         #
-        # 소스가 둘로 나뉜다:
-        #
-        #   object  <- vision_manager (/vision/detected_object)
-        #       pick 대상 도형. 한 번 찍은 위치면 충분하므로
-        #       필터 없이 원시 검출을 그대로 사용한다.
-        #
-        #   target  <- tracking_node (/tracking/predicted_target)
-        #       box 위치. 로봇팔에 잠깐 가려져도 50Hz로 계속 들어오는
-        #       Kalman 평활 값을 사용한다.
-        #
-        # NOTE:
-        # /vision/detected_object 로도 type="target" 이 들어오지만
-        # box 위치의 소유권은 tracking_node 로 통일한다.
-        # (두 소스에서 latest_target 을 갱신하면 값이 튄다.)
-        #
+        # object/target 구독과 /robot/current_pose 발행은 SensorNode 가
+        # 백그라운드 MultiThreadedExecutor 에서 담당한다.
+        # 이 노드(AssemblyController)는 블로킹 movel 동안 spin 되지 않으므로
+        # 여기에 콜백/타이머를 두면 이동 중 멈춘다. (이전 LV3 실패 원인)
         # ========================================================
-
-        self.object_sub = self.create_subscription(
-            DetectedObject,
-            "/vision/detected_object",
-            self.object_callback,
-            10
-        )
-
-        self.target_sub = self.create_subscription(
-            PredictedTarget,
-            "/tracking/predicted_target",
-            self.target_callback,
-            10
-        )
-
-        self.get_logger().info(
-            "object(/vision/detected_object) + "
-            "target(/tracking/predicted_target) 구독 시작"
-        )
-
-
-        # ========================================================
-        # 10. Robot Pose Publisher
-        # ========================================================
-        #
-        # Vision에서 Camera -> Robot 좌표 변환에
-        # robot TCP pose가 필요한 경우 사용.
-        #
-        # ========================================================
-
-        self.robot_pose_pub = self.create_publisher(
-            Float64MultiArray,
-            "/robot/current_pose",
-            10
-        )
-
-
-        # ========================================================
-        # 11. Robot Pose Request State
-        # ========================================================
-
-        self.pose_request_pending = False
-
-
-        # ========================================================
-        # 12. Robot Pose Timer
-        # ========================================================
-        #
-        # 0.1 sec = 10 Hz
-        #
-        # ========================================================
-
-        self.robot_pose_timer = self.create_timer(
-            0.1,
-            self.request_robot_pose
-        )
 
 
         # ========================================================
@@ -451,212 +592,84 @@ class AssemblyController(Node):
         )
 
     # ========================================================
-    # Request Current Robot Pose
+    # Target estimation helpers  (기존 TargetManager 대체)
+    # ========================================================
+    #
+    # 데이터는 SensorNode 가 TargetState 에 채운다. 여기서는 lock 을
+    # 잡고 스냅샷을 복사한 뒤 계산만 한다. (SensorNode 스레드와 동시 접근)
     # ========================================================
 
-    def request_robot_pose(self):
+    def get_velocity(self):
+        """
+        tracking_node 칼만필터가 추정한 box 속도 [mm/s].
+        target 이 아직 없으면 (0, 0, 0).
+        """
+        with self.state.lock:
+            t = self.state.latest_target
+            if t is None:
+                return (0.0, 0.0, 0.0)
+            return (t["vx"], t["vy"], t["vz"])
 
-        if self.pose_request_pending:
-            return
+    def predict_target_from_now(self, future_time=0.0, vel=None):
+        """
+        지금으로부터 future_time 초 뒤의 box 위치를 등속 외삽으로 예측.
 
-        requested = self.robot_init.request_current_pose(
-            self.robot_pose_response
-        )
+        latest_target 의 (x,y,z) 는 (수신시각 + prediction_time) 시점 위치이므로
+        지금(now)+future_time 까지의 실제 외삽 구간은:
+            dt = age + future_time - prediction_time
+        (age = 마지막 target 수신 이후 흐른 시간)
 
-        if requested:
-            self.pose_request_pending = True
+        vel: (vx,vy,vz) 를 넘기면 스냅샷 속도 대신 이 값으로 XY 외삽.
+             (step 8 에서 정지 상자로 판정해 0 으로 만든 속도를 그대로 쓰기 위함)
 
+        NOTE: Z 는 외삽하지 않는다. 상자는 컨베이어 위에서 수평 이동만 하므로
+        벨트면 높이(z)는 사실상 일정하다. 노이즈 섞인 vz 를 곱하면
+        drop_z 가 흔들려서 "너무 높게 놓거나 하강을 안 하는" 문제가 생긴다.
+        -> z 는 항상 마지막으로 측정된 값을 그대로 쓴다.
+        """
+        with self.state.lock:
+            t = self.state.latest_target
+            t_time = self.state.latest_target_time
+            if t is None or t_time is None:
+                return None
+            t = dict(t)   # 스냅샷 복사 후 lock 밖에서 계산
 
-    # ========================================================
-    # Current Robot Pose Response
-    # ========================================================
+        if vel is None:
+            vx, vy = t["vx"], t["vy"]
+        else:
+            vx, vy = vel[0], vel[1]
 
-    def robot_pose_response(self, future):
+        age = (
+            self.get_clock().now() - t_time
+        ).nanoseconds / 1e9
 
-        self.pose_request_pending = False
+        dt = age + float(future_time) - t["prediction_time"]
 
-        try:
-
-            response = future.result()
-
-            if not response.success:
-
-                self.get_logger().warning(
-                    "Failed to get current robot pose."
-                )
-
-                return
-
-
-            if len(response.task_pos_info) == 0:
-
-                self.get_logger().warning(
-                    "Current robot pose is empty."
-                )
-
-                return
-
-
-            pose_data = response.task_pos_info[0].data
-
-
-            # Expected:
-            #
-            # [x, y, z, rx, ry, rz, ...]
-            #
-            # Only first 6 values are used.
-
-            if len(pose_data) < 6:
-
-                self.get_logger().warning(
-                    "Invalid current robot pose data."
-                )
-
-                return
-            
-            self.get_logger().info(
-                f"[ROBOT POSE] "
-                f"x={pose_data[0]:.2f}, "
-                f"y={pose_data[1]:.2f}, "
-                f"z={pose_data[2]:.2f}, "
-                f"rx={pose_data[3]:.2f}, "
-                f"ry={pose_data[4]:.2f}, "
-                f"rz={pose_data[5]:.2f}"
-            )
-
-            robot_pose = [
-                float(pose_data[0]),
-                float(pose_data[1]),
-                float(pose_data[2]),
-                float(pose_data[3]),
-                float(pose_data[4]),
-                float(pose_data[5]),
-            ]
-
-
-            msg = Float64MultiArray()
-
-            msg.data = robot_pose
-
-            self.robot_pose_pub.publish(msg)
-
-
-        except Exception as e:
-
-            self.get_logger().error(
-                f"Failed to get robot pose: {e}"
-            )
-
-
-    # ============================================================
-    # Object Callback  (vision_manager -> /vision/detected_object)
-    # ============================================================
-    #
-    # Object = robot이 집어야 하는 도형.
-    #
-    # 이 토픽에는 vision_manager가 발행하는 type="target"(box)도
-    # 함께 들어오지만, box 위치는 tracking_node의 Kalman 평활 값을
-    # 사용하므로 여기서는 무시한다.
-    #
-    # angle은 현재 Pick-and-Drop에서는 사용하지 않지만
-    # future orientation alignment를 위해 유지한다.
-    #
-    # ============================================================
-
-    def object_callback(self, msg: DetectedObject):
-
-        if msg.type != "object":
-            return
-
-        shape = msg.shape
-
-        x = float(msg.x)
-        y = float(msg.y)
-        z = float(msg.z)
-        angle = float(msg.angle)
-
-        # Shape별 latest object 저장
-        self.objects[shape] = {
-            "type": "object",
-            "shape": shape,
-            "x": x,
-            "y": y,
-            "z": z,
-            "angle": angle,
+        return {
+            "shape": t["shape"],
+            "x": t["x"] + vx * dt,
+            "y": t["y"] + vy * dt,
+            "z": t["z"],                 # Z 는 외삽 안 함 (벨트면 높이는 일정)
+            "angle": t["angle"],
+            "prediction_time": float(future_time),
+            "predicted": True,
         }
 
-        self.get_logger().info(
-            f"[OBJECT UPDATE] "
-            f"shape={shape}, "
-            f"xyz=({x:.1f}, {y:.1f}, {z:.1f}), "
-            f"angle={angle:.1f}"
-        )
+    def get_latest_target_snapshot(self):
+        """lock 을 잡고 latest_target dict 사본을 반환 (없으면 None)."""
+        with self.state.lock:
+            t = self.state.latest_target
+            return dict(t) if t is not None else None
 
-    # ============================================================
-    # Target Callback  (tracking_node -> /tracking/predicted_target)
-    # ============================================================
-    #
-    # tracking_node는 항상 type="target"(box)인 PredictedTarget을
-    # 50Hz로 발행한다. (Kalman 평활 + 가림 보간)
-    # -> type 분기 불필요.
-    #
-    # target_tracking_enabled 게이트:
-    #   run_pick_and_drop()가 로봇 이동 중에는 tracking을 얼려두고,
-    #   board tracking pose 도착 후 새 측정만 수집하기 위해 사용한다.
-    #
-    # 현재 Task는 target shape에 맞춰 삽입하지 않는다.
-    # Target은 Box 위치만 나타내며 shape 정보는 future use로 유지한다.
-    #
-    # ============================================================
+    def wait_object_detected(self, shape):
+        """해당 shape object 가 감지됐는지 (SensorNode 가 채움)."""
+        with self.state.lock:
+            return shape in self.state.objects
 
-    def target_callback(self, msg: PredictedTarget):
-
-        if not self.target_tracking_enabled:
-            return
-
-        shape = msg.shape
-
-        x = float(msg.x)
-        y = float(msg.y)
-        z = float(msg.z)
-        angle = float(msg.angle)
-
-        # ----------------------------------------------------
-        # TargetManager Update
-        #   latest target / history / velocity / timestamp
-        # ----------------------------------------------------
-
-        target_info = self.target_manager.update_target(
-            shape=shape,
-            x=x,
-            y=y,
-            z=z,
-            angle=angle,
-        )
-
-        # Future: shape-specific insertion 재구현 시 사용
-        self.targets[shape] = target_info
-
-        # 가장 최근 target을 Box Center로 사용
-        self.latest_target = target_info
-        self.latest_target_time = self.get_clock().now()
-
-        # Velocity: LV3 moving box following에서 사용
-        vx, vy, vz = self.target_manager.get_velocity()
-
-        self.get_logger().info(
-            f"[TARGET UPDATE] "
-            f"shape={target_info['shape']}, "
-            f"xyz=("
-            f"{target_info['x']:.1f}, "
-            f"{target_info['y']:.1f}, "
-            f"{target_info['z']:.1f}), "
-            f"angle={target_info['angle']:.1f}, "
-            f"velocity=("
-            f"{vx:.1f}, "
-            f"{vy:.1f}, "
-            f"{vz:.1f}) mm/s"
-        )
+    def get_object_snapshot(self, shape):
+        with self.state.lock:
+            o = self.state.objects.get(shape)
+            return dict(o) if o is not None else None
 
     # ========================================================
     # Get Object + Latest Box Target
@@ -675,16 +688,13 @@ class AssemblyController(Node):
         Target shape는 현재 무시한다.
         """
 
-        if object_shape not in self.objects:
+        obj = self.get_object_snapshot(object_shape)
+        target = self.get_latest_target_snapshot()
+
+        if obj is None or target is None:
             return None, None
 
-        if self.latest_target is None:
-            return None, None
-
-        return (
-            self.objects[object_shape],
-            self.latest_target
-        )
+        return (obj, target)
 
 
     # ========================================================
@@ -693,13 +703,13 @@ class AssemblyController(Node):
 
     def get_latest_target(self):
         """
-        Return the last detected target.
+        Return the last detected target snapshot (dict) or None.
 
-        ArUco가 잠깐 가려져도 기존 target을
-        바로 삭제하지 않는다.
+        ArUco가 잠깐 가려져도 tracking_node 가 등속 예측으로
+        계속 발행하므로 기존 target을 바로 삭제하지 않는다.
         """
 
-        return self.latest_target
+        return self.get_latest_target_snapshot()
 
 
     # ========================================================
@@ -710,17 +720,16 @@ class AssemblyController(Node):
         """
         Return how old the latest target measurement is
         in seconds.
-
-        Future moving target tracking에서 사용 가능.
         """
 
-        if self.latest_target_time is None:
+        with self.state.lock:
+            t_time = self.state.latest_target_time
+
+        if t_time is None:
             return None
 
-        now = self.get_clock().now()
-
         age = (
-            now - self.latest_target_time
+            self.get_clock().now() - t_time
         ).nanoseconds / 1e9
 
         return float(age)
@@ -794,8 +803,13 @@ class AssemblyController(Node):
         # ====================================================
         # 4. Move to Board Tracking Pose
         # ====================================================
+        #
+        # SensorNode 는 백그라운드 executor 에서 계속 돌기 때문에
+        # 이 블로킹 movel 동안에도 /robot/current_pose 발행과
+        # target 콜백이 멈추지 않는다. 여기서는 그냥 time.sleep 으로 기다린다.
+        # ====================================================
 
-        self.target_tracking_enabled = False
+        self.state.tracking_enabled = False
 
         self.get_logger().info(
             "[TASK] Moving to board tracking pose..."
@@ -809,96 +823,111 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # 5. Stabilize robot pose before using ArUco target
+        # 5. Reset tracking + stabilize
+        # ====================================================
+        #
+        # tracking_node 필터를 리셋해서 로봇 이동 중 생긴 transient 속도를
+        # 버리고, 정지한 상태에서 다음 측정부터 속도 0 으로 다시 수렴시킨다.
         # ====================================================
 
         self.get_logger().info(
-            "[TASK] Board tracking pose reached. "
-            "Waiting for stabilization..."
+            "[TASK] Board tracking pose reached. Resetting tracker..."
         )
 
-        settle_end = time.monotonic() + 0.8
+        self.state.reset_target()
+        self.state.tracking_enabled = True
+        # reset 메시지가 tracking_node 에 확실히 도달하도록 두 번 (publisher 는 spin 불필요)
+        self.tracking_reset_pub.publish(Empty())
+        time.sleep(0.1)
+        self.tracking_reset_pub.publish(Empty())
 
-        while rclpy.ok() and time.monotonic() < settle_end:
-            rclpy.spin_once(
-                self,
-                timeout_sec=0.05
-            )
+        time.sleep(0.6)     # pose 릴레이 안정 + 필터 재초기화 대기
 
 
         # ====================================================
-        # 6. Start NEW ArUco / Box Target Tracking
+        # 6~7. Wait for first fresh box fix
         # ====================================================
-
-        self.latest_target = None
-        self.latest_target_time = None
-        self.targets.clear()
-        self.target_manager.clear()
-
-        self.target_tracking_enabled = True
+        #
+        # tracking_node 는 상자를 못 봐도 50Hz 로 등속 예측을 계속 발행한다.
+        # 그래서 "메시지 수" 가 아니라 "coast 가 작은(=실제로 보고 있는)"
+        # 메시지가 몇 개 쌓였는지로 판단한다.
+        #
+        # 타임아웃 시:
+        #   - target 자체가 없음        -> 중단 (vision/보드 확인)
+        #   - target 있고 coast 적당함   -> 경고 후 진행 (follow 루프가 재획득)
+        # ====================================================
 
         self.get_logger().info(
-            "[TASK] ArUco box tracking ENABLED."
+            "[TASK] ArUco box tracking ENABLED. Waiting for first fresh fix..."
         )
-
-        # ====================================================
-        # 7. Collect Moving Box Measurements
-        # ====================================================
 
         tracking_start = time.monotonic()
 
         while rclpy.ok():
 
-            rclpy.spin_once(
-                self,
-                timeout_sec=0.05
-            )
+            time.sleep(0.02)
 
-            elapsed = (
-                time.monotonic()
-                - tracking_start
-            )
+            elapsed = time.monotonic() - tracking_start
 
-            enough_time = (
-                elapsed
-                >= LV3_TRACKING_DURATION
-            )
+            snap = self.get_latest_target_snapshot()
+            with self.state.lock:
+                fresh_rx = self.state.fresh_rx_count
 
-            enough_samples = (
-                self.target_manager.get_history_count()
-                >= LV3_MIN_MEASUREMENTS
-            )
+            coast = snap.get("coast", 99.0) if snap is not None else 99.0
+            valid = bool(snap.get("valid", False)) if snap is not None else False
+            fresh_now = valid and coast <= LV3_MAX_COAST
 
+            # 정상 획득
             if (
-                enough_time
-                and enough_samples
+                elapsed >= LV3_TRACKING_DURATION
+                and fresh_rx >= LV3_MIN_MEASUREMENTS
+                and fresh_now
             ):
+                self.get_logger().info(
+                    f"[LV3] first fix in {elapsed:.2f}s "
+                    f"(fresh_rx={fresh_rx}, coast={coast:.2f}s)"
+                )
                 break
 
-
-        if not self.target_manager.has_target():
-
-            self.get_logger().warning(
-                "[LV3] Box target was not detected."
-            )
-
-            return False
+            # 타임아웃
+            if elapsed > LV3_TRACKING_TIMEOUT:
+                if snap is not None and coast <= LV3_TIMEOUT_ACCEPT_COAST:
+                    self.get_logger().warn(
+                        f"[LV3] {elapsed:.1f}s 경과, 완전한 fresh fix 는 아니지만 "
+                        f"target 있음 (coast={coast:.2f}s) -> 진행 "
+                        f"(follow 루프가 재획득)"
+                    )
+                    break
+                self.get_logger().error(
+                    f"[LV3] {elapsed:.1f}s 안에 쓸만한 target 이 안 잡힘 "
+                    f"(fresh_rx={fresh_rx}, coast={coast:.2f}s, valid={valid}). "
+                    f"카메라가 ArUco 보드(ID 0~3)를 보는지 확인 필요. -> 작업 중단"
+                )
+                return False
 
 
         # ====================================================
-        # 8. Estimate Velocity
+        # 8. Estimate Velocity  (tracking_node 칼만필터 상태 속도)
         # ====================================================
 
-        vx, vy, vz = (
-            self.target_manager.get_velocity()
-        )
+        vx, vy, vz = self.get_velocity()
+
+        # 벨트는 수평 이동만 하므로 정지 판정은 XY 속도로만 한다 (vz 노이즈 무시)
+        speed = math.hypot(vx, vy)
 
         self.get_logger().info(
             f"[LV3 VELOCITY] "
-            f"vx={vx:.2f}, "
-            f"vy={vy:.2f}, "
-            f"vz={vz:.2f} mm/s"
+            f"vx={vx:.2f}, vy={vy:.2f}, vz={vz:.2f} mm/s  "
+            f"|v_xy|={speed:.2f}"
         )
+
+        # 정지 상자: 미세 노이즈가 ×예측시간 으로 증폭되지 않게 0 으로 고정
+        if speed < LV3_STATIC_SPEED:
+            self.get_logger().info(
+                f"[LV3 VELOCITY] |v| < {LV3_STATIC_SPEED} mm/s "
+                f"-> 정지 상자로 간주, 예측 외삽 OFF"
+            )
+            vx = vy = vz = 0.0
 
 
         # ====================================================
@@ -910,10 +939,9 @@ class AssemblyController(Node):
         # reaches the initial approach area.
         # ====================================================
 
-        approach_target = (
-            self.target_manager.predict_from_now(
-                future_time=LV3_APPROACH_PREDICTION_TIME
-            )
+        approach_target = self.predict_target_from_now(
+            future_time=LV3_APPROACH_PREDICTION_TIME,
+            vel=(vx, vy, vz),        # step 8 에서 deadband 적용된 속도
         )
 
         if approach_target is None:
@@ -947,30 +975,29 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # 10. Freeze Vision Tracking During Robot Motion
+        # 10. Freeze tracking during robot motion
+        # ====================================================
+        #
+        # 여기서부터는 카메라를 안 쓰고, 잡아둔 위치 + 속도로
+        # 등속 dead-reckoning 만 한다. (open-loop)
+        # 내려가면서 카메라가 ArUco 를 놓쳐도 상관없다.
         # ====================================================
 
-        self.target_tracking_enabled = False
+        self.state.tracking_enabled = False
 
 
         # ====================================================
-        # 11. Record Box State Before Robot Motion
+        # 11. Record box state before robot motion
         # ====================================================
 
-        box_start = (
-            self.target_manager.predict_from_now(
-                future_time=0.0
-            )
+        box_start = self.predict_target_from_now(
+            future_time=0.0,
+            vel=(vx, vy, vz),
         )
 
         if box_start is None:
-
-            self.get_logger().error(
-                "[LV3] Cannot get current box state."
-            )
-
+            self.get_logger().error("[LV3] Cannot get current box state.")
             return False
-
 
         box_start_x = float(box_start["x"])
         box_start_y = float(box_start["y"])
@@ -978,7 +1005,7 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # 12. Move To Predicted Approach Point
+        # 12. Move to predicted approach point
         # ====================================================
 
         approach_start_time = time.monotonic()
@@ -989,54 +1016,35 @@ class AssemblyController(Node):
             acc=50
         )
 
-        approach_elapsed = (
-            time.monotonic()
-            - approach_start_time
-        )
-
+        approach_elapsed = time.monotonic() - approach_start_time
 
         self.get_logger().info(
-            f"[LV3 APPROACH TIME] "
-            f"{approach_elapsed:.3f} sec"
+            f"[LV3 APPROACH TIME] {approach_elapsed:.3f} sec"
         )
 
 
         # ====================================================
-        # 13. Predict Box Position At Actual Approach Arrival
+        # 13. Predict box position at actual approach arrival
         # ====================================================
 
-        current_box_x = (
-            box_start_x
-            + vx * approach_elapsed
-        )
-
-        current_box_y = (
-            box_start_y
-            + vy * approach_elapsed
-        )
-
+        current_box_x = box_start_x + vx * approach_elapsed
+        current_box_y = box_start_y + vy * approach_elapsed
         current_box_z = box_start_z
 
-
         self.get_logger().info(
-            f"[LV3 BOX AT APPROACH] "
-            f"xyz=("
-            f"{current_box_x:.2f}, "
-            f"{current_box_y:.2f}, "
-            f"{current_box_z:.2f})"
+            f"[LV3 BOX AT APPROACH] xyz=("
+            f"{current_box_x:.2f}, {current_box_y:.2f}, {current_box_z:.2f})"
         )
 
 
         # ====================================================
-        # 14. Reposition Above Predicted Current Box Position
+        # 14. Reposition above predicted current box position
         # ====================================================
 
         follow_start_pose = [
             current_box_x + TARGET_X_OFFSET,
             current_box_y + TARGET_Y_OFFSET,
-            current_box_z
-                + TARGET_Z_OFFSET
-                + BOX_APPROACH_HEIGHT,
+            current_box_z + TARGET_Z_OFFSET + BOX_APPROACH_HEIGHT,
             TOOL_RX,
             TOOL_RY,
             TOOL_RZ,
@@ -1050,96 +1058,42 @@ class AssemblyController(Node):
             acc=50
         )
 
-        correction_elapsed = (
-            time.monotonic()
-            - correction_start
-        )
-
+        correction_elapsed = time.monotonic() - correction_start
 
         # Box keeps moving during correction.
-        current_box_x += (
-            vx * correction_elapsed
-        )
-
-        current_box_y += (
-            vy * correction_elapsed
-        )
-
+        current_box_x += vx * correction_elapsed
+        current_box_y += vy * correction_elapsed
 
         self.get_logger().info(
-            f"[LV3 CORRECTION TIME] "
-            f"{correction_elapsed:.3f} sec"
-        )
-
-        self.get_logger().info(
-            f"[LV3 BOX BEFORE DESCENT] "
-            f"xyz=("
-            f"{current_box_x:.2f}, "
-            f"{current_box_y:.2f}, "
-            f"{current_box_z:.2f})"
+            f"[LV3 BOX BEFORE DESCENT] xyz=("
+            f"{current_box_x:.2f}, {current_box_y:.2f}, {current_box_z:.2f})"
         )
 
 
         # ====================================================
-        # 15. Calculate Descent Time
+        # 15. Descent time
         # ====================================================
 
-        approach_z = (
-            current_box_z
-            + TARGET_Z_OFFSET
-            + BOX_APPROACH_HEIGHT
-        )
+        approach_z = current_box_z + TARGET_Z_OFFSET + BOX_APPROACH_HEIGHT
+        drop_z = current_box_z + TARGET_Z_OFFSET + BOX_DROP_HEIGHT
 
-        drop_z = (
-            current_box_z
-            + TARGET_Z_OFFSET
-            + BOX_DROP_HEIGHT
-        )
-
-        vertical_distance = abs(
-            approach_z
-            - drop_z
-        )
+        vertical_distance = abs(approach_z - drop_z)
 
         if DROP_Z_SPEED <= 0.0:
-
-            self.get_logger().error(
-                "[LV3] DROP_Z_SPEED must be > 0."
-            )
-
+            self.get_logger().error("[LV3] DROP_Z_SPEED must be > 0.")
             return False
 
-        descent_time = (
-            vertical_distance
-            / DROP_Z_SPEED
-        )
+        descent_time = vertical_distance / DROP_Z_SPEED
 
 
         # ====================================================
-        # 16. Calculate Moving Drop Endpoint
+        # 16. Moving drop endpoint
         # ====================================================
-
-        delta_x = (
-            vx
-            * descent_time
-        )
-
-        delta_y = (
-            vy
-            * descent_time
-        )
 
         drop_pose = [
-            current_box_x
-                + delta_x
-                + TARGET_X_OFFSET,
-
-            current_box_y
-                + delta_y
-                + TARGET_Y_OFFSET,
-
+            current_box_x + vx * descent_time + TARGET_X_OFFSET,
+            current_box_y + vy * descent_time + TARGET_Y_OFFSET,
             drop_z,
-
             TOOL_RX,
             TOOL_RY,
             TOOL_RZ,
@@ -1147,48 +1101,31 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # 17. Calculate Cartesian Path Velocity
-        # ====================================================
-        #
-        # Desired velocity vector:
-        # [vx, vy, -DROP_Z_SPEED]
-        #
-        # No min/max clamp: changing the total path speed would
-        # change the XY velocity components relative to the box.
+        # 17. Cartesian path velocity  [vx, vy, -DROP_Z_SPEED]
         # ====================================================
 
         moving_drop_vel = math.sqrt(
-            vx * vx
-            + vy * vy
-            + DROP_Z_SPEED * DROP_Z_SPEED
-        )
-
-
-        self.get_logger().info(
-            f"[LV3 FOLLOW DROP] "
-            f"vx={vx:.2f}, "
-            f"vy={vy:.2f}, "
-            f"vz_drop={DROP_Z_SPEED:.2f}, "
-            f"path_vel={moving_drop_vel:.2f}"
+            vx * vx + vy * vy + DROP_Z_SPEED * DROP_Z_SPEED
         )
 
         self.get_logger().info(
-            f"[LV3 DROP TIME] "
-            f"distance_z={vertical_distance:.2f} mm, "
-            f"time={descent_time:.3f} sec"
+            f"[LV3 DROP] follow_v=({vx:.1f},{vy:.1f}) mm/s  "
+            f"endpoint xyz=("
+            f"{drop_pose[0]:.2f}, {drop_pose[1]:.2f}, {drop_pose[2]:.2f})  "
+            f"path_vel={moving_drop_vel:.1f}  descent={vertical_distance:.1f}mm "
+            f"/{descent_time:.2f}s"
         )
-
-        self.get_logger().info(
-            f"[LV3 DROP ENDPOINT] "
-            f"xyz=("
-            f"{drop_pose[0]:.2f}, "
-            f"{drop_pose[1]:.2f}, "
-            f"{drop_pose[2]:.2f})"
-        )
+        if abs(vx) < 1.0 and abs(vy) < 1.0:
+            self.get_logger().warn(
+                "[LV3 DROP] vx,vy≈0 -> 수직 하강만 함(따라가기 없음). "
+                "상자가 움직이는 중이면 [LV3 VELOCITY] 로그 확인: "
+                "KF 속도가 0 이면 tracking 수집시간/검출 문제, "
+                "LV3_STATIC_SPEED 로 죽은 거면 값 더 낮추기."
+            )
 
 
         # ====================================================
-        # 18. Follow Box While Descending
+        # 18. Follow box while descending  (single continuous move)
         # ====================================================
 
         self.robot_init.move_linear_ABS(
@@ -1199,15 +1136,11 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # 19. Release Object
+        # 19. Release
         # ====================================================
 
-        self.get_logger().info(
-            "[LV3 DROP] Releasing object."
-        )
-
+        self.get_logger().info("[LV3 DROP] Releasing object.")
         self.robot_init.open_gripper()
-
         time.sleep(0.3)
 
 
@@ -1215,19 +1148,10 @@ class AssemblyController(Node):
         # 20. Retreat
         # ====================================================
 
-        retreat_pose = [
-            drop_pose[0],
-            drop_pose[1],
-            current_box_z
-                + TARGET_Z_OFFSET
-                + BOX_RETREAT_HEIGHT,
-            TOOL_RX,
-            TOOL_RY,
-            TOOL_RZ,
-        ]
-
         self.robot_init.move_linear_ABS(
-            retreat_pose,
+            [drop_pose[0], drop_pose[1],
+             current_box_z + TARGET_Z_OFFSET + BOX_RETREAT_HEIGHT,
+             TOOL_RX, TOOL_RY, TOOL_RZ],
             vel=40,
             acc=50
         )
@@ -1414,8 +1338,23 @@ def main(args=None):
         args=args
     )
 
+    # ========================================================
+    # 공유 상태 + 2개 노드
+    # ========================================================
+    #
+    #   SensorNode          : object/target 구독 + /robot/current_pose 발행.
+    #                         백그라운드 MultiThreadedExecutor 스레드에서 spin.
+    #   AssemblyController   : 태스크 로직 + 블로킹 DSR 모션.
+    #                         메인 스레드에서 실행. executor 에 넣지 않는다
+    #                         (DSR_ROBOT2 movel 이 이 노드를
+    #                          spin_until_future_complete 로 직접 spin 하므로).
+    # ========================================================
 
-    node = AssemblyController()
+    state = TargetState()
+
+    sensor_node = SensorNode(state)
+    node = AssemblyController(state)
+
     voice_handler = VoiceMotionHandler(node)
 
     # ========================================================
@@ -1427,6 +1366,20 @@ def main(args=None):
     DR_init.__dsr__id = ROBOT_ID
     DR_init.__dsr__model = ROBOT_MODEL
     DR_init.__dsr__node = node
+
+
+    # ========================================================
+    # SensorNode 를 백그라운드에서 spin
+    # ========================================================
+
+    sensor_exec = MultiThreadedExecutor(num_threads=2)
+    sensor_exec.add_node(sensor_node)
+
+    spin_thread = threading.Thread(
+        target=sensor_exec.spin,
+        daemon=True,
+    )
+    spin_thread.start()
 
 
     try:
@@ -1443,43 +1396,31 @@ def main(args=None):
 
 
         # ====================================================
-        # Select Object Shape
-        # ====================================================
-        #
-        # Target shape와는 관계 없음.
-        #
-        # Object pick selection 용도.
+        # Select Object Shape (음성)
         # ====================================================
 
         voice_handler.request_shape()
         shape = voice_handler.keyword
 
-        node.get_logger().info(
-            f"{shape} object 검출 대기 중..."
-        )
         if not shape:
             node.get_logger().warn(
-                "음성 인식 실패: 도형을 선택하지 못했습니다.-작업중단"
+                "음성 인식 실패: 도형을 선택하지 못했습니다. -> circle 로 진행"
             )
             shape = "circle"
 
+        node.get_logger().info(
+            f"{shape} object 검출 대기 중..."
+        )
 
 
         # ====================================================
-        # Wait for Object ONLY
+        # Wait for Object ONLY  (SensorNode 가 state.objects 채움)
         # ====================================================
 
-        node.target_tracking_enabled = False
+        state.tracking_enabled = False
 
-        while rclpy.ok():
-
-            rclpy.spin_once(
-                node,
-                timeout_sec=0.1
-            )
-
-            if shape in node.objects:
-                break
+        while rclpy.ok() and not node.wait_object_detected(shape):
+            time.sleep(0.05)
 
 
         # ====================================================
@@ -1492,10 +1433,11 @@ def main(args=None):
 
 
         # ====================================================
-        # Keep Node Alive
+        # Keep Alive
         # ====================================================
 
-        rclpy.spin(node)
+        while rclpy.ok():
+            time.sleep(0.5)
 
 
     except KeyboardInterrupt:
@@ -1507,6 +1449,10 @@ def main(args=None):
 
     finally:
 
+        sensor_exec.shutdown()
+        spin_thread.join(timeout=2.0)
+
+        sensor_node.destroy_node()
         node.destroy_node()
 
 
