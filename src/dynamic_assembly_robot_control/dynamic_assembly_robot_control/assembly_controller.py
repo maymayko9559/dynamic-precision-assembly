@@ -124,20 +124,20 @@ BOX_RETREAT_HEIGHT = 100.0
 
 
 # ============================================================
-# LV3 Constant-Velocity Following Configuration
+# LV3 ServoL Constant-Velocity Following Configuration
 # ============================================================
 
 LV3_TRACKING_DURATION = 1.0
 LV3_MIN_MEASUREMENTS = 6
 
-# Approximate time used only for the initial intercept prediction.
 LV3_APPROACH_PREDICTION_TIME = 2.0
 
-# Desired vertical descent speed while following the moving box.
-DROP_Z_SPEED = 40.0       # [mm/s]
-
-# Cartesian acceleration for the diagonal following motion.
-MOVING_DROP_ACC = 40.0    # [mm/s^2]
+DROP_Z_SPEED = 40.0               # [mm/s]
+SERVO_PERIOD = 0.02               # [sec] = 50 Hz
+SERVO_LINEAR_VEL = 120.0          # [mm/s]
+SERVO_ANGULAR_VEL = 20.0          # [deg/s]
+SERVO_LINEAR_ACC = 300.0          # [mm/s^2]
+SERVO_ANGULAR_ACC = 100.0         # [deg/s^2]
 
 
 # ============================================================
@@ -572,18 +572,13 @@ class AssemblyController(Node):
 
             # Shape별 latest object 저장
             self.objects[shape] = object_info
-            # ---------------------------------
-            # DB insert "object"
-            # ---------------------------------
-            self.db.insert_data("object", shape , x, y, z, angle)
-            self.get_logger().warn("오브젝트 데이터 삽입 완료")
-            
-            self.get_logger().info(
-                f"[OBJECT UPDATE] "
-                f"shape={shape}, "
-                f"xyz=({x:.1f}, {y:.1f}, {z:.1f}), "
-                f"angle={angle:.1f}"
-            )
+
+            # self.get_logger().info(
+            #     f"[OBJECT UPDATE] "
+            #     f"shape={shape}, "
+            #     f"xyz=({x:.1f}, {y:.1f}, {z:.1f}), "
+            #     f"angle={angle:.1f}"
+            # )
 
             return
 
@@ -674,19 +669,19 @@ class AssemblyController(Node):
             # Debug Log
             # ----------------------------------------------------
 
-            self.get_logger().info(
-                f"[TARGET UPDATE] "
-                f"shape={target_info['shape']}, "
-                f"xyz=("
-                f"{target_info['x']:.1f}, "
-                f"{target_info['y']:.1f}, "
-                f"{target_info['z']:.1f}), "
-                f"angle={target_info['angle']:.1f}, "
-                f"velocity=("
-                f"{vx:.1f}, "
-                f"{vy:.1f}, "
-                f"{vz:.1f}) mm/s"
-            )
+            # self.get_logger().info(
+            #     f"[TARGET UPDATE] "
+            #     f"shape={target_info['shape']}, "
+            #     f"xyz=("
+            #     f"{target_info['x']:.1f}, "
+            #     f"{target_info['y']:.1f}, "
+            #     f"{target_info['z']:.1f}), "
+            #     f"angle={target_info['angle']:.1f}, "
+            #     f"velocity=("
+            #     f"{vx:.1f}, "
+            #     f"{vy:.1f}, "
+            #     f"{vz:.1f}) mm/s"
+            # )
 
             return
 
@@ -695,11 +690,11 @@ class AssemblyController(Node):
         # 4. Unknown Detection Type
         # ========================================================
 
-        self.get_logger().warning(
-            f"[VISION] Unknown detection type: "
-            f"type={object_type}, "
-            f"shape={shape}"
-        )
+        # self.get_logger().warning(
+        #     f"[VISION] Unknown detection type: "
+        #     f"type={object_type}, "
+        #     f"shape={shape}"
+        # )
 
     # ========================================================
     # Get Object + Latest Box Target
@@ -936,12 +931,12 @@ class AssemblyController(Node):
             self.target_manager.get_velocity()
         )
 
-        self.get_logger().info(
-            f"[LV3 VELOCITY] "
-            f"vx={vx:.2f}, "
-            f"vy={vy:.2f}, "
-            f"vz={vz:.2f} mm/s"
-        )
+        # self.get_logger().info(
+        #     f"[LV3 VELOCITY] "
+        #     f"vx={vx:.2f}, "
+        #     f"vy={vy:.2f}, "
+        #     f"vz={vz:.2f} mm/s"
+        # )
 
 
         # ====================================================
@@ -980,13 +975,13 @@ class AssemblyController(Node):
         ]
 
 
-        self.get_logger().info(
-            f"[LV3 APPROACH TARGET] "
-            f"xyz=("
-            f"{approach_pose[0]:.2f}, "
-            f"{approach_pose[1]:.2f}, "
-            f"{approach_pose[2]:.2f})"
-        )
+        # self.get_logger().info(
+        #     f"[LV3 APPROACH TARGET] "
+        #     f"xyz=("
+        #     f"{approach_pose[0]:.2f}, "
+        #     f"{approach_pose[1]:.2f}, "
+        #     f"{approach_pose[2]:.2f})"
+        # )
 
 
         # ====================================================
@@ -1061,13 +1056,13 @@ class AssemblyController(Node):
         current_box_z = box_start_z
 
 
-        self.get_logger().info(
-            f"[LV3 BOX AT APPROACH] "
-            f"xyz=("
-            f"{current_box_x:.2f}, "
-            f"{current_box_y:.2f}, "
-            f"{current_box_z:.2f})"
-        )
+        # self.get_logger().info(
+        #     f"[LV3 BOX AT APPROACH] "
+        #     f"xyz=("
+        #     f"{current_box_x:.2f}, "
+        #     f"{current_box_y:.2f}, "
+        #     f"{current_box_z:.2f})"
+        # )
 
 
         # ====================================================
@@ -1114,13 +1109,13 @@ class AssemblyController(Node):
             f"{correction_elapsed:.3f} sec"
         )
 
-        self.get_logger().info(
-            f"[LV3 BOX BEFORE DESCENT] "
-            f"xyz=("
-            f"{current_box_x:.2f}, "
-            f"{current_box_y:.2f}, "
-            f"{current_box_z:.2f})"
-        )
+        # self.get_logger().info(
+        #     f"[LV3 BOX BEFORE DESCENT] "
+        #     f"xyz=("
+        #     f"{current_box_x:.2f}, "
+        #     f"{current_box_y:.2f}, "
+        #     f"{current_box_z:.2f})"
+        # )
 
 
         # ====================================================
@@ -1159,26 +1154,95 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # 16. Calculate Moving Drop Endpoint
+        # 16. ServoL Constant-Velocity Following Drop
+        # ====================================================
+        #
+        # Box velocity is assumed constant:
+        #   x(t) = x0 + vx * t
+        #   y(t) = y0 + vy * t
+        #
+        # During descent:
+        #   robot vx = box vx
+        #   robot vy = box vy
+        #   robot vz = -DROP_Z_SPEED
+        #
+        # New Cartesian targets are streamed at 50 Hz.
         # ====================================================
 
-        delta_x = (
-            vx
-            * descent_time
-        )
+        # self.get_logger().info(
+        #     f"[LV3 SERVOL START] "
+        #     f"vx={vx:.2f}, "
+        #     f"vy={vy:.2f}, "
+        #     f"z_speed={DROP_Z_SPEED:.2f}, "
+        #     f"period={SERVO_PERIOD:.3f}s, "
+        #     f"descent_time={descent_time:.3f}s"
+        # )
 
-        delta_y = (
-            vy
-            * descent_time
-        )
+        servo_start_time = time.monotonic()
 
-        drop_pose = [
+        while rclpy.ok():
+
+            elapsed = (
+                time.monotonic()
+                - servo_start_time
+            )
+
+            if elapsed >= descent_time:
+                break
+
+            servo_x = (
+                current_box_x
+                + vx * elapsed
+                + TARGET_X_OFFSET
+            )
+
+            servo_y = (
+                current_box_y
+                + vy * elapsed
+                + TARGET_Y_OFFSET
+            )
+
+            servo_z = (
+                approach_z
+                - DROP_Z_SPEED * elapsed
+            )
+
+            if servo_z < drop_z:
+                servo_z = drop_z
+
+            servo_pose = [
+                servo_x,
+                servo_y,
+                servo_z,
+                TOOL_RX,
+                TOOL_RY,
+                TOOL_RZ,
+            ]
+
+            self.robot_init.servo_linear_ABS(
+                servo_pose,
+                vel_linear=SERVO_LINEAR_VEL,
+                vel_angular=SERVO_ANGULAR_VEL,
+                acc_linear=SERVO_LINEAR_ACC,
+                acc_angular=SERVO_ANGULAR_ACC,
+            )
+
+            time.sleep(
+                SERVO_PERIOD
+            )
+
+
+        # ====================================================
+        # 17. Send Exact Final Drop Target
+        # ====================================================
+
+        final_drop_pose = [
             current_box_x
-                + delta_x
+                + vx * descent_time
                 + TARGET_X_OFFSET,
 
             current_box_y
-                + delta_y
+                + vy * descent_time
                 + TARGET_Y_OFFSET,
 
             drop_z,
@@ -1188,61 +1252,29 @@ class AssemblyController(Node):
             TOOL_RZ,
         ]
 
-
-        # ====================================================
-        # 17. Calculate Cartesian Path Velocity
-        # ====================================================
-        #
-        # Desired velocity vector:
-        # [vx, vy, -DROP_Z_SPEED]
-        #
-        # No min/max clamp: changing the total path speed would
-        # change the XY velocity components relative to the box.
-        # ====================================================
-
-        moving_drop_vel = math.sqrt(
-            vx * vx
-            + vy * vy
-            + DROP_Z_SPEED * DROP_Z_SPEED
+        self.robot_init.servo_linear_ABS(
+            final_drop_pose,
+            vel_linear=SERVO_LINEAR_VEL,
+            vel_angular=SERVO_ANGULAR_VEL,
+            acc_linear=SERVO_LINEAR_ACC,
+            acc_angular=SERVO_ANGULAR_ACC,
         )
 
-
-        self.get_logger().info(
-            f"[LV3 FOLLOW DROP] "
-            f"vx={vx:.2f}, "
-            f"vy={vy:.2f}, "
-            f"vz_drop={DROP_Z_SPEED:.2f}, "
-            f"path_vel={moving_drop_vel:.2f}"
+        time.sleep(
+            SERVO_PERIOD * 2.0
         )
 
-        self.get_logger().info(
-            f"[LV3 DROP TIME] "
-            f"distance_z={vertical_distance:.2f} mm, "
-            f"time={descent_time:.3f} sec"
-        )
-
-        self.get_logger().info(
-            f"[LV3 DROP ENDPOINT] "
-            f"xyz=("
-            f"{drop_pose[0]:.2f}, "
-            f"{drop_pose[1]:.2f}, "
-            f"{drop_pose[2]:.2f})"
-        )
+        # self.get_logger().info(
+        #     f"[LV3 SERVOL END] "
+        #     f"xyz=("
+        #     f"{final_drop_pose[0]:.2f}, "
+        #     f"{final_drop_pose[1]:.2f}, "
+        #     f"{final_drop_pose[2]:.2f})"
+        # )
 
 
         # ====================================================
-        # 18. Follow Box While Descending
-        # ====================================================
-
-        self.robot_init.move_linear_ABS(
-            drop_pose,
-            vel=moving_drop_vel,
-            acc=MOVING_DROP_ACC
-        )
-
-
-        # ====================================================
-        # 19. Release Object
+        # 18. Release Object
         # ====================================================
 
         self.get_logger().info(
@@ -1255,12 +1287,12 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # 20. Retreat
+        # 19. Retreat
         # ====================================================
 
         retreat_pose = [
-            drop_pose[0],
-            drop_pose[1],
+            final_drop_pose[0],
+            final_drop_pose[1],
             current_box_z
                 + TARGET_Z_OFFSET
                 + BOX_RETREAT_HEIGHT,
@@ -1276,7 +1308,7 @@ class AssemblyController(Node):
         )
 
         self.get_logger().info(
-            "[LV3 DROP] Constant-velocity following drop completed."
+            "[LV3 DROP] ServoL following drop completed."
         )
 
         return True
@@ -1357,15 +1389,15 @@ class AssemblyController(Node):
             return
 
 
-        self.get_logger().info(
-            f"[MATCH] {shape} | "
-            f"Object Angle: "
-            f"{obj['angle']:.2f} deg | "
-            f"Target Angle: "
-            f"{target['angle']:.2f} deg | "
-            f"Rotation: "
-            f"{delta_angle:.2f} deg"
-        )
+        # self.get_logger().info(
+        #     f"[MATCH] {shape} | "
+        #     f"Object Angle: "
+        #     f"{obj['angle']:.2f} deg | "
+        #     f"Target Angle: "
+        #     f"{target['angle']:.2f} deg | "
+        #     f"Rotation: "
+        #     f"{delta_angle:.2f} deg"
+        # )
 
 
     # ========================================================
@@ -1504,7 +1536,7 @@ def main(args=None):
             node.get_logger().warn(
                 "음성 인식 실패: 도형을 선택하지 못했습니다.-작업중단"
             )
-            shape = "circle"
+            shape = "square"
 
 
 
