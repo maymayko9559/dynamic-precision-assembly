@@ -50,6 +50,7 @@ from std_msgs.msg import Float64MultiArray
 #from sensor_msgs.msg import JointState
 
 from assembly_interfaces.msg import DetectedObject
+from assembly_interfaces.msg import PredictedTarget
 
 from .robot_init import RobotInit
 from .motion_utils import MotionUtils
@@ -344,18 +345,43 @@ class AssemblyController(Node):
 
 
         # ========================================================
-        # 9. Vision Detection Subscriber
+        # 9. Detection Subscribers
+        # ========================================================
+        #
+        # 소스가 둘로 나뉜다:
+        #
+        #   object  <- vision_manager (/vision/detected_object)
+        #       pick 대상 도형. 한 번 찍은 위치면 충분하므로
+        #       필터 없이 원시 검출을 그대로 사용한다.
+        #
+        #   target  <- tracking_node (/tracking/predicted_target)
+        #       box 위치. 로봇팔에 잠깐 가려져도 50Hz로 계속 들어오는
+        #       Kalman 평활 값을 사용한다.
+        #
+        # NOTE:
+        # /vision/detected_object 로도 type="target" 이 들어오지만
+        # box 위치의 소유권은 tracking_node 로 통일한다.
+        # (두 소스에서 latest_target 을 갱신하면 값이 튄다.)
+        #
         # ========================================================
 
-        self.subscription = self.create_subscription(
+        self.object_sub = self.create_subscription(
             DetectedObject,
             "/vision/detected_object",
-            self.listener_callback,
+            self.object_callback,
+            10
+        )
+
+        self.target_sub = self.create_subscription(
+            PredictedTarget,
+            "/tracking/predicted_target",
+            self.target_callback,
             10
         )
 
         self.get_logger().info(
-            "DetectedObject 구독 시작"
+            "object(/vision/detected_object) + "
+            "target(/tracking/predicted_target) 구독 시작"
         )
 
 
@@ -523,16 +549,25 @@ class AssemblyController(Node):
 
 
     # ============================================================
-    # DetectedObject Listener Callback
+    # Object Callback  (vision_manager -> /vision/detected_object)
+    # ============================================================
+    #
+    # Object = robot이 집어야 하는 도형.
+    #
+    # 이 토픽에는 vision_manager가 발행하는 type="target"(box)도
+    # 함께 들어오지만, box 위치는 tracking_node의 Kalman 평활 값을
+    # 사용하므로 여기서는 무시한다.
+    #
+    # angle은 현재 Pick-and-Drop에서는 사용하지 않지만
+    # future orientation alignment를 위해 유지한다.
+    #
     # ============================================================
 
-    def listener_callback(self, msg):
+    def object_callback(self, msg: DetectedObject):
 
-        # ========================================================
-        # 1. Read Vision Message
-        # ========================================================
+        if msg.type != "object":
+            return
 
-        object_type = msg.type
         shape = msg.shape
 
         x = float(msg.x)
@@ -540,146 +575,87 @@ class AssemblyController(Node):
         z = float(msg.z)
         angle = float(msg.angle)
 
+        # Shape별 latest object 저장
+        self.objects[shape] = {
+            "type": "object",
+            "shape": shape,
+            "x": x,
+            "y": y,
+            "z": z,
+            "angle": angle,
+        }
 
-        # ========================================================
-        # 2. Object Detection
-        # ========================================================
-        #
-        # Object = robot이 집어야 하는 도형
-        #
-        # Shape별 최신 Object 위치를 저장한다.
-        #
-        # angle은 현재 Pick-and-Drop에서는 사용하지 않지만
-        # future orientation alignment를 위해 유지한다.
-        #
-        # ========================================================
+        self.get_logger().info(
+            f"[OBJECT UPDATE] "
+            f"shape={shape}, "
+            f"xyz=({x:.1f}, {y:.1f}, {z:.1f}), "
+            f"angle={angle:.1f}"
+        )
 
-        if object_type == "object":
+    # ============================================================
+    # Target Callback  (tracking_node -> /tracking/predicted_target)
+    # ============================================================
+    #
+    # tracking_node는 항상 type="target"(box)인 PredictedTarget을
+    # 50Hz로 발행한다. (Kalman 평활 + 가림 보간)
+    # -> type 분기 불필요.
+    #
+    # target_tracking_enabled 게이트:
+    #   run_pick_and_drop()가 로봇 이동 중에는 tracking을 얼려두고,
+    #   board tracking pose 도착 후 새 측정만 수집하기 위해 사용한다.
+    #
+    # 현재 Task는 target shape에 맞춰 삽입하지 않는다.
+    # Target은 Box 위치만 나타내며 shape 정보는 future use로 유지한다.
+    #
+    # ============================================================
 
-            object_info = {
-                "type": "object",
-                "shape": shape,
-                "x": x,
-                "y": y,
-                "z": z,
-                "angle": angle,
-            }
+    def target_callback(self, msg: PredictedTarget):
 
-            # Shape별 latest object 저장
-            self.objects[shape] = object_info
-
-            self.get_logger().info(
-                f"[OBJECT UPDATE] "
-                f"shape={shape}, "
-                f"xyz=({x:.1f}, {y:.1f}, {z:.1f}), "
-                f"angle={angle:.1f}"
-            )
-
+        if not self.target_tracking_enabled:
             return
 
+        shape = msg.shape
 
-        # ========================================================
-        # 3. Target / Box Detection
-        # ========================================================
-        #
-        # 현재 Task:
-        #
-        # target의 shape에 맞춰 삽입하지 않는다.
-        #
-        # Target은 Box의 위치를 나타내며,
-        # 가장 최근 target을 box center로 사용한다.
-        #
-        # 그러나 shape 정보는 future use를 위해 유지한다.
-        #
-        # TargetManager:
-        #
-        #   latest target
-        #   history
-        #   velocity estimation
-        #   timestamp
-        #
-        # 를 관리한다.
-        #
-        # ========================================================
+        x = float(msg.x)
+        y = float(msg.y)
+        z = float(msg.z)
+        angle = float(msg.angle)
 
-        if object_type == "target":
+        # ----------------------------------------------------
+        # TargetManager Update
+        #   latest target / history / velocity / timestamp
+        # ----------------------------------------------------
 
-            if not self.target_tracking_enabled:
-                return
+        target_info = self.target_manager.update_target(
+            shape=shape,
+            x=x,
+            y=y,
+            z=z,
+            angle=angle,
+        )
 
-            # ----------------------------------------------------
-            # TargetManager Update
-            # ----------------------------------------------------
+        # Future: shape-specific insertion 재구현 시 사용
+        self.targets[shape] = target_info
 
-            target_info = self.target_manager.update_target(
-                shape=shape,
-                x=x,
-                y=y,
-                z=z,
-                angle=angle,
-            )
+        # 가장 최근 target을 Box Center로 사용
+        self.latest_target = target_info
+        self.latest_target_time = self.get_clock().now()
 
+        # Velocity: LV3 moving box following에서 사용
+        vx, vy, vz = self.target_manager.get_velocity()
 
-            # ----------------------------------------------------
-            # Store target by shape
-            #
-            # Future:
-            # shape-specific insertion을 다시 구현할 때 사용 가능
-            # ----------------------------------------------------
-
-            self.targets[shape] = target_info
-
-
-            # ----------------------------------------------------
-            # Current Task:
-            #
-            # 가장 최근 target을 Box Center로 사용
-            # ----------------------------------------------------
-
-            self.latest_target = target_info
-
-            self.latest_target_time = self.get_clock().now()
-
-
-            # ----------------------------------------------------
-            # Velocity
-            #
-            # 현재 LV1에서는 로봇 제어에 사용하지 않는다.
-            # LV3 moving box에서 사용 예정.
-            # ----------------------------------------------------
-
-            vx, vy, vz = self.target_manager.get_velocity()
-
-
-            # ----------------------------------------------------
-            # Debug Log
-            # ----------------------------------------------------
-
-            self.get_logger().info(
-                f"[TARGET UPDATE] "
-                f"shape={target_info['shape']}, "
-                f"xyz=("
-                f"{target_info['x']:.1f}, "
-                f"{target_info['y']:.1f}, "
-                f"{target_info['z']:.1f}), "
-                f"angle={target_info['angle']:.1f}, "
-                f"velocity=("
-                f"{vx:.1f}, "
-                f"{vy:.1f}, "
-                f"{vz:.1f}) mm/s"
-            )
-
-            return
-
-
-        # ========================================================
-        # 4. Unknown Detection Type
-        # ========================================================
-
-        self.get_logger().warning(
-            f"[VISION] Unknown detection type: "
-            f"type={object_type}, "
-            f"shape={shape}"
+        self.get_logger().info(
+            f"[TARGET UPDATE] "
+            f"shape={target_info['shape']}, "
+            f"xyz=("
+            f"{target_info['x']:.1f}, "
+            f"{target_info['y']:.1f}, "
+            f"{target_info['z']:.1f}), "
+            f"angle={target_info['angle']:.1f}, "
+            f"velocity=("
+            f"{vx:.1f}, "
+            f"{vy:.1f}, "
+            f"{vz:.1f}) mm/s"
         )
 
     # ========================================================
