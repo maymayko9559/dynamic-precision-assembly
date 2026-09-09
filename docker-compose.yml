@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  postgres_db:
+    image: postgres:15-alpine
+    container_name: assembly_postgres
+    environment:
+      POSTGRES_USER: rokey
+      POSTGRES_PASSWORD: rokey_password
+      POSTGRES_DB: assembly_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: always
+
+volumes:
+  pgdata:
