@@ -1,6 +1,5 @@
 # db_manager.py
 import psycopg2
-from datetime import datetime
 
 class DbManager:
     def __init__(self, host="localhost", port="5432", database="assembly_db", user="rokey", password="rokey_password"):
@@ -41,6 +40,9 @@ class DbManager:
 
     def insert_data(self, detect_type, shape, x, y, z, angle):
         """데이터 적재 (실무에서는 쿼리 인젝션 방지를 위해 파라미터 바인딩 사용)"""
+    
+
+
         if not self.conn:
             return
 
@@ -50,6 +52,7 @@ class DbManager:
                 VALUES (%s, %s, %s, %s, %s, %s)
             '''
             self.cursor.execute(query, (detect_type, shape, x, y, z, angle))
+            print("좌표값 받아옴")
             self.conn.commit()
         except Exception as e:
             print(f"데이터 삽입 중 에러 발생: {e}")
@@ -62,6 +65,7 @@ class DbManager:
         if self.conn:
             self.conn.close()
             print("PostgreSQL 연결이 안전하게 종료되었습니다.")
+
+
 if __name__ == "__main__":
     db = DbManager()
-    

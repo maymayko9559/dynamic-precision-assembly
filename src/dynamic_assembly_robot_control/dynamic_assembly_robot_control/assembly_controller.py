@@ -56,6 +56,7 @@ from .motion_utils import MotionUtils
 from .target_manager import TargetManager
 from .motion_planner import MotionPlanner
 from .voice_motion_handler import VoiceMotionHandler
+from .db_manager import DbManager
 
 
 # ============================================================
@@ -403,6 +404,10 @@ class AssemblyController(Node):
         self.get_logger().info(
             "Assembly Controller started."
         )
+        # ========================================================
+        # DB
+        # ========================================================
+        self.db = DbManager()
 
     # ========================================================
     # Move Robot to Home
@@ -567,7 +572,12 @@ class AssemblyController(Node):
 
             # Shape별 latest object 저장
             self.objects[shape] = object_info
-
+            # ---------------------------------
+            # DB insert "object"
+            # ---------------------------------
+            self.db.insert_data("object", shape , x, y, z, angle)
+            self.get_logger().warn("오브젝트 데이터 삽입 완료")
+            
             self.get_logger().info(
                 f"[OBJECT UPDATE] "
                 f"shape={shape}, "
@@ -629,7 +639,9 @@ class AssemblyController(Node):
 
             self.targets[shape] = target_info
 
-
+            self.db.insert_data("target", shape , x, y, z, angle)
+            self.get_logger().warn("타겟 데이터 삽입 완료")
+                        
             # ----------------------------------------------------
             # Current Task:
             #
@@ -637,6 +649,13 @@ class AssemblyController(Node):
             # ----------------------------------------------------
 
             self.latest_target = target_info
+
+            # ---------------------------------
+            # DB insert "object"
+            # ---------------------------------
+
+
+            #self.db.insert_data("target", shape, x, y, z, angle)
 
             self.latest_target_time = self.get_clock().now()
 
@@ -1530,6 +1549,8 @@ def main(args=None):
 
 
     finally:
+        if hasattr(node, 'db'):
+            node.db.close()
 
         node.destroy_node()
 

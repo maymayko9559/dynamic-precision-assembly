@@ -33,6 +33,7 @@ setup(
             'target_manager = dynamic_assembly_robot_control.target_manager:main',
             'motion_utils = dynamic_assembly_robot_control.motion_utils:main',
             'voice_motion_handler = dynamic_assembly_robot_control.voice_motion_handler:main',
+            'db_manager = dynamic_assembly_robot_control.db_manager:main'
         ],
     },
 )
