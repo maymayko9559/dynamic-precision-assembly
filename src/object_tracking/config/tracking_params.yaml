@@ -32,10 +32,5 @@ tracking_node:
     dt_max: 0.15                # 최대 시간간격 범위
     warmup_updates: 5           # 초기 N회는 게이트 비활성화
 
-    # --- coast / occlusion (M3~) ---
-    max_coast_time: 1.0         # s, 초과 시 예측 발행 중단
-
-    # --- prediction (M4~) ---
-    pipeline_latency: 0.05      # s, 이미지 캡처 -> 노드 수신 (M6 실측)
-    prediction_horizon: 0.5    # s, PredictedTarget.prediction_time
-    min_speed_for_prediction: 2.0  # mm/s 미만이면 정지로 간주
+    # 출력은 "noise 없는 현재 상자 위치" (prediction_time=0.0).
+    # 상자가 가려져도 등속 예측으로 계속 발행 (중단 없음). 미래 외삽·속도 발행 없음.
