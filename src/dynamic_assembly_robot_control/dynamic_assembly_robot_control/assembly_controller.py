@@ -42,6 +42,7 @@
 
 import rclpy
 import time
+import math
 
 from rclpy.node import Node
 
@@ -122,12 +123,20 @@ BOX_RETREAT_HEIGHT = 100.0
 
 
 # ============================================================
-# LV3 Moving Target Configuration
+# LV3 Constant-Velocity Following Configuration
 # ============================================================
 
 LV3_TRACKING_DURATION = 1.0
-LV3_PREDICTION_TIME = 2.0
 LV3_MIN_MEASUREMENTS = 6
+
+# Approximate time used only for the initial intercept prediction.
+LV3_APPROACH_PREDICTION_TIME = 2.0
+
+# Desired vertical descent speed while following the moving box.
+DROP_Z_SPEED = 40.0       # [mm/s]
+
+# Cartesian acceleration for the diagonal following motion.
+MOVING_DROP_ACC = 40.0    # [mm/s^2]
 
 
 # ============================================================
@@ -164,7 +173,6 @@ OBJECT_VIEW_POSE = [
     179.83,
     15.33
 ]
-
 
 # ============================================================
 # Assembly Controller
@@ -288,7 +296,7 @@ class AssemblyController(Node):
         self.target_manager = TargetManager(
             node=self,
             history_size=20,
-            stale_timeout=2.0,
+            stale_timeout=1.0,
             velocity_window=10,
             min_velocity_samples=4,
         )
@@ -408,8 +416,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_joint(
             HOME_JOINT,
-            vel=50,
-            acc=50
+            vel=30,
+            acc=30
         )
 
         self.get_logger().info(
@@ -480,15 +488,15 @@ class AssemblyController(Node):
 
                 return
             
-            # self.get_logger().info(
-            #     f"[ROBOT POSE] "
-            #     f"x={pose_data[0]:.2f}, "
-            #     f"y={pose_data[1]:.2f}, "
-            #     f"z={pose_data[2]:.2f}, "
-            #     f"rx={pose_data[3]:.2f}, "
-            #     f"ry={pose_data[4]:.2f}, "
-            #     f"rz={pose_data[5]:.2f}"
-            # )
+            self.get_logger().info(
+                f"[ROBOT POSE] "
+                f"x={pose_data[0]:.2f}, "
+                f"y={pose_data[1]:.2f}, "
+                f"z={pose_data[2]:.2f}, "
+                f"rx={pose_data[3]:.2f}, "
+                f"ry={pose_data[4]:.2f}, "
+                f"rz={pose_data[5]:.2f}"
+            )
 
             robot_pose = [
                 float(pose_data[0]),
@@ -560,12 +568,12 @@ class AssemblyController(Node):
             # Shape별 latest object 저장
             self.objects[shape] = object_info
 
-            # self.get_logger().info(
-            #     f"[OBJECT UPDATE] "
-            #     f"shape={shape}, "
-            #     f"xyz=({x:.1f}, {y:.1f}, {z:.1f}), "
-            #     f"angle={angle:.1f}"
-            # )
+            self.get_logger().info(
+                f"[OBJECT UPDATE] "
+                f"shape={shape}, "
+                f"xyz=({x:.1f}, {y:.1f}, {z:.1f}), "
+                f"angle={angle:.1f}"
+            )
 
             return
 
@@ -819,8 +827,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_linear_ABS(
             BOARD_TRACKING_POSE,
-            vel=40,
-            acc=40
+            vel=20,
+            acc=20
         )
 
 
@@ -918,93 +926,341 @@ class AssemblyController(Node):
 
 
         # ====================================================
-        # 9. Predict Future Target
+        # 9. Predict Initial Approach Target
+        # ====================================================
+        #
+        # Box velocity is assumed constant.
+        # We first predict where the box will be when the robot
+        # reaches the initial approach area.
         # ====================================================
 
-        predicted_target = (
+        approach_target = (
             self.target_manager.predict_from_now(
-                future_time=LV3_PREDICTION_TIME
+                future_time=LV3_APPROACH_PREDICTION_TIME
             )
         )
 
-        if predicted_target is None:
+        if approach_target is None:
 
-            self.get_logger().warning(
-                "[LV3] Failed to predict box target."
+            self.get_logger().error(
+                "[LV3] Cannot predict approach target."
             )
 
             return False
 
 
-        self.get_logger().info(
-            f"[LV3 PREDICTED TARGET] "
-            f"dt={predicted_target['prediction_time']:.2f}s, "
-            f"xyz=("
-            f"{predicted_target['x']:.2f}, "
-            f"{predicted_target['y']:.2f}, "
-            f"{predicted_target['z']:.2f})"
-        )
-
-
-        # ====================================================
-        # 10. Freeze Predicted Target
-        # ====================================================
-
-        fixed_target = {
-            "shape": predicted_target.get(
-                "shape",
-                "box"
-            ),
-            "x": float(
-                predicted_target["x"]
-            ),
-            "y": float(
-                predicted_target["y"]
-            ),
-            "z": float(
-                predicted_target["z"]
-            ),
-            "angle": float(
-                predicted_target.get(
-                    "angle",
-                    0.0
-                )
-            ),
-        }
-
-        self.get_logger().info(
-            f"[FIXED PREDICTED BOX TARGET] "
-            f"xyz=("
-            f"{fixed_target['x']:.2f}, "
-            f"{fixed_target['y']:.2f}, "
-            f"{fixed_target['z']:.2f})"
-        )
-
-        # ====================================================
-        # 11. Drop
-        # ====================================================
-
-        target_pose = [
-            fixed_target["x"] + TARGET_X_OFFSET,
-            fixed_target["y"] + TARGET_Y_OFFSET,
-            fixed_target["z"] + TARGET_Z_OFFSET,
+        approach_pose = [
+            approach_target["x"] + TARGET_X_OFFSET,
+            approach_target["y"] + TARGET_Y_OFFSET,
+            approach_target["z"]
+                + TARGET_Z_OFFSET
+                + BOX_APPROACH_HEIGHT,
             TOOL_RX,
             TOOL_RY,
             TOOL_RZ,
         ]
 
 
-        self.target_tracking_enabled = False
-
-        success = self.mu.drop_object(
-            target_pose,
-            approach_height=BOX_APPROACH_HEIGHT,
-            drop_height=BOX_DROP_HEIGHT,
-            retreat_height=BOX_RETREAT_HEIGHT,
+        self.get_logger().info(
+            f"[LV3 APPROACH TARGET] "
+            f"xyz=("
+            f"{approach_pose[0]:.2f}, "
+            f"{approach_pose[1]:.2f}, "
+            f"{approach_pose[2]:.2f})"
         )
 
 
-        return success
+        # ====================================================
+        # 10. Freeze Vision Tracking During Robot Motion
+        # ====================================================
+
+        self.target_tracking_enabled = False
+
+
+        # ====================================================
+        # 11. Record Box State Before Robot Motion
+        # ====================================================
+
+        box_start = (
+            self.target_manager.predict_from_now(
+                future_time=0.0
+            )
+        )
+
+        if box_start is None:
+
+            self.get_logger().error(
+                "[LV3] Cannot get current box state."
+            )
+
+            return False
+
+
+        box_start_x = float(box_start["x"])
+        box_start_y = float(box_start["y"])
+        box_start_z = float(box_start["z"])
+
+
+        # ====================================================
+        # 12. Move To Predicted Approach Point
+        # ====================================================
+
+        approach_start_time = time.monotonic()
+
+        self.robot_init.move_linear_ABS(
+            approach_pose,
+            vel=20,
+            acc=20
+        )
+
+        approach_elapsed = (
+            time.monotonic()
+            - approach_start_time
+        )
+
+
+        self.get_logger().info(
+            f"[LV3 APPROACH TIME] "
+            f"{approach_elapsed:.3f} sec"
+        )
+
+
+        # ====================================================
+        # 13. Predict Box Position At Actual Approach Arrival
+        # ====================================================
+
+        current_box_x = (
+            box_start_x
+            + vx * approach_elapsed
+        )
+
+        current_box_y = (
+            box_start_y
+            + vy * approach_elapsed
+        )
+
+        current_box_z = box_start_z
+
+
+        self.get_logger().info(
+            f"[LV3 BOX AT APPROACH] "
+            f"xyz=("
+            f"{current_box_x:.2f}, "
+            f"{current_box_y:.2f}, "
+            f"{current_box_z:.2f})"
+        )
+
+
+        # ====================================================
+        # 14. Reposition Above Predicted Current Box Position
+        # ====================================================
+
+        follow_start_pose = [
+            current_box_x + TARGET_X_OFFSET,
+            current_box_y + TARGET_Y_OFFSET,
+            current_box_z
+                + TARGET_Z_OFFSET
+                + BOX_APPROACH_HEIGHT,
+            TOOL_RX,
+            TOOL_RY,
+            TOOL_RZ,
+        ]
+
+        correction_start = time.monotonic()
+
+        self.robot_init.move_linear_ABS(
+            follow_start_pose,
+            vel=20,
+            acc=20
+        )
+
+        correction_elapsed = (
+            time.monotonic()
+            - correction_start
+        )
+
+
+        # Box keeps moving during correction.
+        current_box_x += (
+            vx * correction_elapsed
+        )
+
+        current_box_y += (
+            vy * correction_elapsed
+        )
+
+
+        self.get_logger().info(
+            f"[LV3 CORRECTION TIME] "
+            f"{correction_elapsed:.3f} sec"
+        )
+
+        self.get_logger().info(
+            f"[LV3 BOX BEFORE DESCENT] "
+            f"xyz=("
+            f"{current_box_x:.2f}, "
+            f"{current_box_y:.2f}, "
+            f"{current_box_z:.2f})"
+        )
+
+
+        # ====================================================
+        # 15. Calculate Descent Time
+        # ====================================================
+
+        approach_z = (
+            current_box_z
+            + TARGET_Z_OFFSET
+            + BOX_APPROACH_HEIGHT
+        )
+
+        drop_z = (
+            current_box_z
+            + TARGET_Z_OFFSET
+            + BOX_DROP_HEIGHT
+        )
+
+        vertical_distance = abs(
+            approach_z
+            - drop_z
+        )
+
+        if DROP_Z_SPEED <= 0.0:
+
+            self.get_logger().error(
+                "[LV3] DROP_Z_SPEED must be > 0."
+            )
+
+            return False
+
+        descent_time = (
+            vertical_distance
+            / DROP_Z_SPEED
+        )
+
+
+        # ====================================================
+        # 16. Calculate Moving Drop Endpoint
+        # ====================================================
+
+        delta_x = (
+            vx
+            * descent_time
+        )
+
+        delta_y = (
+            vy
+            * descent_time
+        )
+
+        drop_pose = [
+            current_box_x
+                + delta_x
+                + TARGET_X_OFFSET,
+
+            current_box_y
+                + delta_y
+                + TARGET_Y_OFFSET,
+
+            drop_z,
+
+            TOOL_RX,
+            TOOL_RY,
+            TOOL_RZ,
+        ]
+
+
+        # ====================================================
+        # 17. Calculate Cartesian Path Velocity
+        # ====================================================
+        #
+        # Desired velocity vector:
+        # [vx, vy, -DROP_Z_SPEED]
+        #
+        # No min/max clamp: changing the total path speed would
+        # change the XY velocity components relative to the box.
+        # ====================================================
+
+        moving_drop_vel = math.sqrt(
+            vx * vx
+            + vy * vy
+            + DROP_Z_SPEED * DROP_Z_SPEED
+        )
+
+
+        self.get_logger().info(
+            f"[LV3 FOLLOW DROP] "
+            f"vx={vx:.2f}, "
+            f"vy={vy:.2f}, "
+            f"vz_drop={DROP_Z_SPEED:.2f}, "
+            f"path_vel={moving_drop_vel:.2f}"
+        )
+
+        self.get_logger().info(
+            f"[LV3 DROP TIME] "
+            f"distance_z={vertical_distance:.2f} mm, "
+            f"time={descent_time:.3f} sec"
+        )
+
+        self.get_logger().info(
+            f"[LV3 DROP ENDPOINT] "
+            f"xyz=("
+            f"{drop_pose[0]:.2f}, "
+            f"{drop_pose[1]:.2f}, "
+            f"{drop_pose[2]:.2f})"
+        )
+
+
+        # ====================================================
+        # 18. Follow Box While Descending
+        # ====================================================
+
+        self.robot_init.move_linear_ABS(
+            drop_pose,
+            vel=moving_drop_vel,
+            acc=MOVING_DROP_ACC
+        )
+
+
+        # ====================================================
+        # 19. Release Object
+        # ====================================================
+
+        self.get_logger().info(
+            "[LV3 DROP] Releasing object."
+        )
+
+        self.robot_init.open_gripper()
+
+        time.sleep(0.3)
+
+
+        # ====================================================
+        # 20. Retreat
+        # ====================================================
+
+        retreat_pose = [
+            drop_pose[0],
+            drop_pose[1],
+            current_box_z
+                + TARGET_Z_OFFSET
+                + BOX_RETREAT_HEIGHT,
+            TOOL_RX,
+            TOOL_RY,
+            TOOL_RZ,
+        ]
+
+        self.robot_init.move_linear_ABS(
+            retreat_pose,
+            vel=20,
+            acc=20
+        )
+
+        self.get_logger().info(
+            "[LV3 DROP] Constant-velocity following drop completed."
+        )
+
+        return True
 
     # ========================================================
     # Joint State Callback
@@ -1200,7 +1456,7 @@ def main(args=None):
     try:
 
         node.robot_init.move_linear_ABS(
-            OBJECT_VIEW_POSE, vel=40, acc=40
+            OBJECT_VIEW_POSE, vel=40, acc=20
         )
 
         # ====================================================
