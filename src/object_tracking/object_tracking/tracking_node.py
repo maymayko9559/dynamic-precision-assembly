@@ -189,11 +189,13 @@ class TrackingNode(Node):
         p = self.kf.position
 
         out = PredictedTarget()
-        out.shape = self.last_shape
+        out.type = "target"             # 로봇 컨트롤이 DetectedObject 처럼 msg.type 로 분기
+        out.shape = self.last_shape     # "box"
         out.x = float(p[0])
         out.y = float(p[1])
         out.z = float(p[2])
-        out.prediction_time = 0.0        # 항상 "현재 위치"
+        out.angle = 0.0                 # 상자 방향 미추적
+        out.prediction_time = 0.0       # 항상 "현재 위치" (미래 예측 X)
         self.pub.publish(out)
 
         # 튜닝 확인용 로그 (발행 안 함) : M5 에서 본다.
