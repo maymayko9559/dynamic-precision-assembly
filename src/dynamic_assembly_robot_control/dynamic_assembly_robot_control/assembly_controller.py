@@ -118,7 +118,7 @@ BOX_APPROACH_HEIGHT = 100.0
 # IMPORTANT:
 # 실제 box 높이 / target Z 정의에 맞춰
 # 실험 후 조정해야 한다.
-BOX_DROP_HEIGHT = 40.0
+BOX_DROP_HEIGHT = 20.0
 
 BOX_RETREAT_HEIGHT = 100.0
 
@@ -130,12 +130,12 @@ BOX_RETREAT_HEIGHT = 100.0
 LV3_TRACKING_DURATION = 1.0
 LV3_MIN_MEASUREMENTS = 6
 
-LV3_APPROACH_PREDICTION_TIME = 2.0
+LV3_APPROACH_PREDICTION_TIME = 1.0
 
-DROP_Z_SPEED = 40.0               # [mm/s]
+DROP_Z_SPEED = 60.0               # [mm/s]
 SERVO_PERIOD = 0.02               # [sec] = 50 Hz
-SERVO_LINEAR_VEL = 120.0          # [mm/s]
-SERVO_ANGULAR_VEL = 20.0          # [deg/s]
+SERVO_LINEAR_VEL = 150.0          # [mm/s]
+SERVO_ANGULAR_VEL = 40.0          # [deg/s]
 SERVO_LINEAR_ACC = 300.0          # [mm/s^2]
 SERVO_ANGULAR_ACC = 100.0         # [deg/s^2]
 
@@ -157,14 +157,24 @@ HOME_JOINT = [
 # Camera View Poses
 # ============================================================
 
+# BOARD_TRACKING_POSE = [
+#     -279.86,
+#     -474.66,
+#     362.31,
+#     65.95,
+#     -178.16,
+#     157.31
+# ]
+
 BOARD_TRACKING_POSE = [
-    -279.86,
-    -474.66,
-    362.31,
-    65.95,
-    -178.16,
-    157.31
+    263.76,
+    -528.06,
+    311.34,
+    102.58,
+    -177.54,
+    102.93
 ]
+
 
 OBJECT_VIEW_POSE = [
     363.80,
@@ -421,8 +431,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_joint(
             HOME_JOINT,
-            vel=30,
-            acc=30
+            vel=70,
+            acc=70
         )
 
         self.get_logger().info(
@@ -493,15 +503,15 @@ class AssemblyController(Node):
 
                 return
             
-            self.get_logger().info(
-                f"[ROBOT POSE] "
-                f"x={pose_data[0]:.2f}, "
-                f"y={pose_data[1]:.2f}, "
-                f"z={pose_data[2]:.2f}, "
-                f"rx={pose_data[3]:.2f}, "
-                f"ry={pose_data[4]:.2f}, "
-                f"rz={pose_data[5]:.2f}"
-            )
+            # self.get_logger().info(
+            #     f"[ROBOT POSE] "
+            #     f"x={pose_data[0]:.2f}, "
+            #     f"y={pose_data[1]:.2f}, "
+            #     f"z={pose_data[2]:.2f}, "
+            #     f"rx={pose_data[3]:.2f}, "
+            #     f"ry={pose_data[4]:.2f}, "
+            #     f"rz={pose_data[5]:.2f}"
+            # )
 
             robot_pose = [
                 float(pose_data[0]),
@@ -841,8 +851,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_linear_ABS(
             BOARD_TRACKING_POSE,
-            vel=40,
-            acc=50
+            vel=70,
+            acc=70
         )
 
 
@@ -1023,8 +1033,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_linear_ABS(
             approach_pose,
-            vel=40,
-            acc=50
+            vel=70,
+            acc=70
         )
 
         approach_elapsed = (
@@ -1084,8 +1094,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_linear_ABS(
             follow_start_pose,
-            vel=40,
-            acc=50
+            vel=70,
+            acc=70
         )
 
         correction_elapsed = (
@@ -1231,60 +1241,77 @@ class AssemblyController(Node):
                 SERVO_PERIOD
             )
 
-
         # ====================================================
-        # 17. Send Exact Final Drop Target
-        # ====================================================
-
-        final_drop_pose = [
-            current_box_x
-                + vx * descent_time
-                + TARGET_X_OFFSET,
-
-            current_box_y
-                + vy * descent_time
-                + TARGET_Y_OFFSET,
-
-            drop_z,
-
-            TOOL_RX,
-            TOOL_RY,
-            TOOL_RZ,
-        ]
-
-        self.robot_init.servo_linear_ABS(
-            final_drop_pose,
-            vel_linear=SERVO_LINEAR_VEL,
-            vel_angular=SERVO_ANGULAR_VEL,
-            acc_linear=SERVO_LINEAR_ACC,
-            acc_angular=SERVO_ANGULAR_ACC,
-        )
-
-        time.sleep(
-            SERVO_PERIOD * 2.0
-        )
-
-        # self.get_logger().info(
-        #     f"[LV3 SERVOL END] "
-        #     f"xyz=("
-        #     f"{final_drop_pose[0]:.2f}, "
-        #     f"{final_drop_pose[1]:.2f}, "
-        #     f"{final_drop_pose[2]:.2f})"
-        # )
-
-
-        # ====================================================
-        # 18. Release Object
+        # 17. Final drop + keep following during release
         # ====================================================
 
-        self.get_logger().info(
-            "[LV3 DROP] Releasing object."
-        )
+        release_follow_time = 0.30
 
-        self.robot_init.open_gripper()
+        release_start_time = time.monotonic()
 
-        time.sleep(0.3)
+        gripper_open_sent = False
 
+        while rclpy.ok():
+
+            release_elapsed = (
+                time.monotonic()
+                - release_start_time
+            )
+
+            if release_elapsed >= release_follow_time:
+                break
+
+
+            total_elapsed = (
+                descent_time
+                + release_elapsed
+            )
+
+
+            servo_x = (
+                current_box_x
+                + vx * total_elapsed
+                + TARGET_X_OFFSET
+            )
+
+            servo_y = (
+                current_box_y
+                + vy * total_elapsed
+                + TARGET_Y_OFFSET
+            )
+
+            servo_z = drop_z
+
+
+            servo_pose = [
+                servo_x,
+                servo_y,
+                servo_z,
+                TOOL_RX,
+                TOOL_RY,
+                TOOL_RZ,
+            ]
+
+
+            self.robot_init.servo_linear_ABS(
+                servo_pose,
+                vel_linear=SERVO_LINEAR_VEL,
+                vel_angular=SERVO_ANGULAR_VEL,
+                acc_linear=SERVO_LINEAR_ACC,
+                acc_angular=SERVO_ANGULAR_ACC,
+            )
+
+
+            if not gripper_open_sent:
+
+                self.robot_init.open_gripper_nowait()
+
+                gripper_open_sent = True
+
+
+            time.sleep(
+                SERVO_PERIOD
+            )
 
         # ====================================================
         # 19. Retreat
@@ -1303,8 +1330,8 @@ class AssemblyController(Node):
 
         self.robot_init.move_linear_ABS(
             retreat_pose,
-            vel=40,
-            acc=50
+            vel=70,
+            acc=70
         )
 
         self.get_logger().info(
@@ -1507,7 +1534,7 @@ def main(args=None):
     try:
 
         node.robot_init.move_linear_ABS(
-            OBJECT_VIEW_POSE, vel=40, acc=50
+            OBJECT_VIEW_POSE, vel=70, acc=70
         )
 
         # ====================================================
@@ -1536,7 +1563,7 @@ def main(args=None):
             node.get_logger().warn(
                 "음성 인식 실패: 도형을 선택하지 못했습니다.-작업중단"
             )
-            shape = "square"
+            shape = "circle"
 
 
 

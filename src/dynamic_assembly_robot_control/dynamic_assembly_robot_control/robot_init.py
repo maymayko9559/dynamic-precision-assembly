@@ -115,6 +115,14 @@ class RobotInit:
         wait(1.0)
 
 
+    def open_gripper_nowait(self):
+
+        self.node.get_logger().info(
+            "Gripper OPEN"
+        )
+
+        self.gripper.open_gripper()
+        
     # ========================================================
     # Gripper Close
     # ========================================================
@@ -181,7 +189,8 @@ class RobotInit:
         target_pos = posx(pos_target)
 
         self.node.get_logger().info(
-            f"절대좌표 이동: {target_pos}"
+            f"절대좌표 이동: {target_pos}", 
+            throttle_duration_sec=1.0
         )
 
         movel(
@@ -212,7 +221,9 @@ class RobotInit:
         target_offset = posx(pos_offset)
 
         self.node.get_logger().info(
-            f"상대좌표 이동: {target_offset}"
+            f"상대좌표 이동: {target_offset}",
+            throttle_duration_sec=1.0
+
         )
 
         movel(
