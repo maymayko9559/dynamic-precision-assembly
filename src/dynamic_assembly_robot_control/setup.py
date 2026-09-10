@@ -28,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'assembly_controller = dynamic_assembly_robot_control.assembly_controller:main',
+            'assembly_controller2 = dynamic_assembly_robot_control.assembly_controller2:main',
             'insertion_controller = dynamic_assembly_robot_control.insertion_controller:main',
             'motion_planner = dynamic_assembly_robot_control.motion_planner:main',
             'target_manager = dynamic_assembly_robot_control.target_manager:main',
