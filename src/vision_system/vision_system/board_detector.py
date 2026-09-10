@@ -328,154 +328,121 @@ class BoardDetector:
             return None
 
         ids = ids.flatten()
-
         required_ids = [0, 1, 2, 3]
-
         centers = {}
 
-        for marker_id in required_ids:
-
-            if marker_id not in ids:
-                return None
-
         for marker_id, marker_corners in zip(ids, corners):
-
             marker_id = int(marker_id)
-
             if marker_id not in required_ids:
                 continue
 
-            # OpenCV ArUco:
-            # marker_corners shape -> (1, 4, 2)
             pts = marker_corners[0]
-
-            center = np.mean(
-                pts,
-                axis=0
-            )
-
+            center = np.mean(pts, axis=0)
             centers[marker_id] = (
                 float(center[0]),
                 float(center[1])
             )
 
-        return centers
-    
+        return centers if centers else None
+
     # ========================================================
-    # Estimate Box Pose using solvePnP
+    # Visible Board Markers
     # ========================================================
 
-    def estimate_box_pose(
+    def get_visible_markers(self, corners, ids):
+        """Return visible board markers (IDs 0~3) and all 4 image corners."""
+
+        if ids is None or corners is None:
+            return {}
+
+        visible = {}
+
+        for marker_id, marker_corners in zip(ids.flatten(), corners):
+            marker_id = int(marker_id)
+            if marker_id not in [0, 1, 2, 3]:
+                continue
+
+            pts = np.asarray(marker_corners[0], dtype=np.float32)
+            if pts.shape == (4, 2):
+                visible[marker_id] = pts
+
+        return visible
+
+    def _marker_object_corners(self, marker_id):
+        """Physical marker corners in board frame [mm].
+
+        Assumes all four printed markers have the same orientation.
+        Marker size = 30 mm. Marker centers = +/-70 mm.
+        """
+
+        centers = {
+            0: (-70.0, -70.0),
+            1: ( 70.0, -70.0),
+            2: ( 70.0,  70.0),
+            3: (-70.0,  70.0),
+        }
+
+        cx, cy = centers[int(marker_id)]
+        h = 15.0
+
+        return np.array([
+            [cx - h, cy - h, 0.0],
+            [cx + h, cy - h, 0.0],
+            [cx + h, cy + h, 0.0],
+            [cx - h, cy + h, 0.0],
+        ], dtype=np.float32)
+
+    # ========================================================
+    # Estimate Box Pose using visible ArUco marker corners
+    # ========================================================
+
+    def estimate_box_pose_from_markers(
         self,
-        marker_centers,
+        corners,
+        ids,
         camera_intrinsics
     ):
         """
-        Estimate the 3D pose of the box center using the
-        four ArUco marker centers.
+        Occlusion-tolerant board pose estimation.
 
-        Box center is defined as:
-            (0, 0, 0)
+        4 visible markers -> 16 2D/3D correspondences
+        3 visible markers -> 12 correspondences
+        2 visible markers ->  8 correspondences
+        1 visible marker  ->  4 correspondences
+        0 visible markers -> None
 
-        Marker center layout [mm]:
-
-            ID0 (-70, -70) ---- ID1 ( 70, -70)
-                |                    |
-                |     BOX CENTER     |
-                |       (0,0)        |
-                |                    |
-            ID3 (-70,  70) ---- ID2 ( 70,  70)
-
-        Returns:
-            camera_position = [x, y, z]
-            rvec
-            tvec
-
-        Returns None if pose estimation fails.
+        Since marker size and board geometry are known, one visible
+        marker still provides enough corner correspondences for planar PnP.
         """
 
-        if marker_centers is None:
+        visible = self.get_visible_markers(corners, ids)
+        marker_count = len(visible)
+
+        if marker_count == 0 or camera_intrinsics is None:
             return None
 
-        required_ids = [0, 1, 2, 3]
+        object_points = []
+        image_points = []
 
-        for marker_id in required_ids:
-            if marker_id not in marker_centers:
-                return None
+        for marker_id in sorted(visible.keys()):
+            object_points.extend(self._marker_object_corners(marker_id))
+            image_points.extend(visible[marker_id])
 
-        if camera_intrinsics is None:
-            return None
+        object_points = np.asarray(object_points, dtype=np.float32)
+        image_points = np.asarray(image_points, dtype=np.float32)
 
+        fx = float(camera_intrinsics["fx"])
+        fy = float(camera_intrinsics["fy"])
+        cx = float(camera_intrinsics["cx"])
+        cy = float(camera_intrinsics["cy"])
 
-        # ====================================================
-        # 1. Physical 3D Coordinates
-        # ====================================================
+        camera_matrix = np.array([
+            [fx, 0.0, cx],
+            [0.0, fy, cy],
+            [0.0, 0.0, 1.0],
+        ], dtype=np.float64)
 
-        object_points = np.array(
-            [
-                [-70.0, -70.0, 0.0],   # ID 0
-                [ 70.0, -70.0, 0.0],   # ID 1
-                [ 70.0,  70.0, 0.0],   # ID 2
-                [-70.0,  70.0, 0.0],   # ID 3
-            ],
-            dtype=np.float32
-        )
-
-
-        # ====================================================
-        # 2. Corresponding Image Points
-        # ====================================================
-
-        image_points = np.array(
-            [
-                marker_centers[0],
-                marker_centers[1],
-                marker_centers[2],
-                marker_centers[3],
-            ],
-            dtype=np.float32
-        )
-
-
-        # ====================================================
-        # 3. Camera Matrix
-        # ====================================================
-
-        fx = camera_intrinsics["fx"]
-        fy = camera_intrinsics["fy"]
-        cx = camera_intrinsics["cx"]
-        cy = camera_intrinsics["cy"]
-
-        camera_matrix = np.array(
-            [
-                [fx, 0.0, cx],
-                [0.0, fy, cy],
-                [0.0, 0.0, 1.0],
-            ],
-            dtype=np.float64
-        )
-
-
-        # ====================================================
-        # 4. Distortion
-        # ====================================================
-        #
-        # 현재 CameraInfo에서 distortion coefficients를
-        # 저장하지 않고 있으므로 0으로 둔다.
-        #
-        # 이후 msg.d 값을 저장하면 실제 distortion을
-        # 사용하도록 개선할 수 있다.
-        # ====================================================
-
-        dist_coeffs = np.zeros(
-            (5, 1),
-            dtype=np.float64
-        )
-
-
-        # ====================================================
-        # 5. solvePnP
-        # ====================================================
+        dist_coeffs = np.zeros((5, 1), dtype=np.float64)
 
         success, rvec, tvec = cv2.solvePnP(
             object_points,
@@ -488,16 +455,28 @@ class BoardDetector:
         if not success:
             return None
 
+        if not np.all(np.isfinite(rvec)) or not np.all(np.isfinite(tvec)):
+            return None
 
-        # ====================================================
-        # 6. Box Center Position in Camera Coordinates
-        # ====================================================
-        #
-        # object coordinate origin = box center
-        #
-        # 따라서 tvec 자체가 camera 기준
-        # box-center translation이다.
-        # ====================================================
+        if float(tvec[2][0]) <= 0.0:
+            return None
+
+        projected, _ = cv2.projectPoints(
+            object_points,
+            rvec,
+            tvec,
+            camera_matrix,
+            dist_coeffs
+        )
+        projected = projected.reshape(-1, 2)
+        reprojection_error = float(np.mean(np.linalg.norm(projected - image_points, axis=1)))
+
+        quality = {
+            4: "FULL",
+            3: "GOOD",
+            2: "PARTIAL",
+            1: "MINIMAL",
+        }[marker_count]
 
         camera_position = [
             float(tvec[0][0]),
@@ -505,8 +484,115 @@ class BoardDetector:
             float(tvec[2][0]),
         ]
 
-        return (
-            camera_position,
-            rvec,
-            tvec
+        return {
+            "camera_position": camera_position,
+            "rvec": rvec,
+            "tvec": tvec,
+            "visible_ids": sorted(visible.keys()),
+            "marker_count": marker_count,
+            "tracking_quality": quality,
+            "reprojection_error": reprojection_error,
+        }
+
+    # ========================================================
+    # Backward-compatible four-center PnP
+    # ========================================================
+
+    def estimate_box_pose(
+        self,
+        marker_centers,
+        camera_intrinsics
+    ):
+        """Original 4-marker-center implementation.
+
+        Kept so existing callers do not break. New code should use
+        estimate_box_pose_from_markers(corners, ids, intrinsics).
+        """
+
+        if marker_centers is None or camera_intrinsics is None:
+            return None
+
+        required_ids = [0, 1, 2, 3]
+        for marker_id in required_ids:
+            if marker_id not in marker_centers:
+                return None
+
+        object_points = np.array([
+            [-70.0, -70.0, 0.0],
+            [ 70.0, -70.0, 0.0],
+            [ 70.0,  70.0, 0.0],
+            [-70.0,  70.0, 0.0],
+        ], dtype=np.float32)
+
+        image_points = np.array([
+            marker_centers[0], marker_centers[1],
+            marker_centers[2], marker_centers[3],
+        ], dtype=np.float32)
+
+        fx = camera_intrinsics["fx"]
+        fy = camera_intrinsics["fy"]
+        cx = camera_intrinsics["cx"]
+        cy = camera_intrinsics["cy"]
+
+        camera_matrix = np.array([
+            [fx, 0.0, cx],
+            [0.0, fy, cy],
+            [0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+
+        dist_coeffs = np.zeros((5, 1), dtype=np.float64)
+
+        success, rvec, tvec = cv2.solvePnP(
+            object_points, image_points, camera_matrix, dist_coeffs,
+            flags=cv2.SOLVEPNP_IPPE
         )
+
+        if not success:
+            return None
+
+        camera_position = [
+            float(tvec[0][0]),
+            float(tvec[1][0]),
+            float(tvec[2][0]),
+        ]
+
+        return camera_position, rvec, tvec
+
+    # ========================================================
+    # Reconstruct board boundary from estimated pose
+    # ========================================================
+
+    def project_board_corners(self, rvec, tvec, camera_intrinsics):
+        """Project the known 110x110 mm inner board region.
+
+        This keeps ROI/boundary available even when some markers are hidden.
+        """
+
+        if rvec is None or tvec is None or camera_intrinsics is None:
+            return None
+
+        fx = float(camera_intrinsics["fx"])
+        fy = float(camera_intrinsics["fy"])
+        cx = float(camera_intrinsics["cx"])
+        cy = float(camera_intrinsics["cy"])
+
+        camera_matrix = np.array([
+            [fx, 0.0, cx],
+            [0.0, fy, cy],
+            [0.0, 0.0, 1.0],
+        ], dtype=np.float64)
+        dist_coeffs = np.zeros((5, 1), dtype=np.float64)
+
+        # Inner corners: marker centers +/-70, marker half-size 15 => +/-55 mm
+        board_points = np.array([
+            [-55.0, -55.0, 0.0],
+            [ 55.0, -55.0, 0.0],
+            [ 55.0,  55.0, 0.0],
+            [-55.0,  55.0, 0.0],
+        ], dtype=np.float32)
+
+        projected, _ = cv2.projectPoints(
+            board_points, rvec, tvec, camera_matrix, dist_coeffs
+        )
+
+        return projected.reshape(4, 2).astype(np.float32)

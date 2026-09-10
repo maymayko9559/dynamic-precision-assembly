@@ -386,13 +386,6 @@ class VisionManager(Node):
             raw_frame
         )
 
-        board_corners = (
-            self.board_detector.get_board_corners(
-                corners,
-                ids
-            )
-        )
-
         marker_centers = (
             self.board_detector.get_marker_centers(
                 corners,
@@ -408,17 +401,9 @@ class VisionManager(Node):
             )
         )
 
-        if board_corners is not None:
-
-            debug_frame = (
-                self.board_detector.draw_board_boundary(
-                    debug_frame,
-                    board_corners
-                )
-            )
-
         return (
-            board_corners,
+            corners,
+            ids,
             marker_centers,
             debug_frame
         )
@@ -448,11 +433,11 @@ class VisionManager(Node):
             )
 
             # TEST
-            self.get_logger().info(
-                f'{target["shape"]}: '
-                f'board={board_center}, '
-                f'pixel=({u}, {v})'
-            )
+            # self.get_logger().info(
+            #     f'{target["shape"]}: '
+            #     f'board={board_center}, '
+            #     f'pixel=({u}, {v})'
+            # )
 
             camera_position = self.get_camera_position(u, v)
 
@@ -480,7 +465,7 @@ class VisionManager(Node):
                 f"[TRANSFORM INPUT] "
                 f"robot_pose={self.current_robot_pose}, "
                 f"camera_xyz={camera_position}",
-                throttle_duration_sec=0.5
+                throttle_duration_sec=1.0
             )
 
             robot_position = (
@@ -493,7 +478,8 @@ class VisionManager(Node):
             self.get_logger().info(
                 f'{target["shape"]}: '
                 f'camera_xyz={camera_position}, '
-                f'robot_xyz={robot_position}'
+                f'robot_xyz={robot_position}',
+                throttle_duration_sec=1.0
             )
 
             self.publish_detection(target, robot_position)
@@ -528,7 +514,8 @@ class VisionManager(Node):
             self.get_logger().info(
                 f'{obj["shape"]}: '
                 f'camera_xyz={camera_position}, '
-                f'robot_xyz={robot_position}'
+                f'robot_xyz={robot_position}',
+                throttle_duration_sec=1.0
             )
 
             self.publish_detection(
@@ -548,9 +535,9 @@ class VisionManager(Node):
 
         depth = self.latest_depth_frame[v, u]
 
-        self.get_logger().info(
-            f"pixel=({u}, {v}), depth={depth}"
-        )
+        # self.get_logger().info(
+        #     f"pixel=({u}, {v}), depth={depth}"
+        # )
 
         if depth <= 0:
             self.get_logger().warning(
@@ -565,12 +552,13 @@ class VisionManager(Node):
             self.camera_intrinsics
         )
             
-        self.get_logger().info(
-            f"Pixel -> Camera: "
-            f"pixel=({u}, {v}), "
-            f"depth={depth}, "
-            f"camera_xyz={camera_position}"
-        )
+        # self.get_logger().info(
+        #     f"Pixel -> Camera: "
+        #     f"pixel=({u}, {v}), "
+        #     f"depth={depth}, "
+        #     f"camera_xyz={camera_position}",
+        #     throttle_duration_sec=1.0
+        # )
 
         return camera_position
 
@@ -639,13 +627,12 @@ class VisionManager(Node):
             # ArUco IDs 0,1,2,3 define the box.
             # ====================================================
 
-            board_corners, marker_centers, debug_frame = (
+            aruco_corners, aruco_ids, marker_centers, debug_frame = (
                 self.detect_board(
                     raw_frame,
                     debug_frame
                 )
             )
-
 
             if marker_centers is not None:
 
@@ -678,21 +665,21 @@ class VisionManager(Node):
             )
 
             # ====================================================
-            # 3. BOX TARGET
+            # 3. BOX TARGET - OCCLUSION TOLERANT
             # ====================================================
 
-            if board_corners is not None:
+            if aruco_ids is not None:
 
                 self.process_box_target(
-                    board_corners,
-                    marker_centers,
+                    aruco_corners,
+                    aruco_ids,
                     debug_frame
                 )
 
             else:
 
                 self.get_logger().info(
-                    "Waiting for Box ArUco IDs 0, 1, 2, 3...",
+                    "[BOX TRACKING] No ArUco marker visible.",
                     throttle_duration_sec=1.0
                 )
 
@@ -723,60 +710,85 @@ class VisionManager(Node):
 
     def process_box_target(
         self,
-        board_corners,
-        marker_centers,
+        aruco_corners,
+        aruco_ids,
         debug_frame
     ):
-        if board_corners is None:
-            return
 
-        # ========================================================
-        # 1. Calculate Box Center Pixel
-        # ========================================================
-        #
-        # board_corners:
-        # [
-        #     [x0, y0],
-        #     [x1, y1],
-        #     [x2, y2],
-        #     [x3, y3]
-        # ]
-        #
-        # 네 개 corner의 평균 = box center
-        # ========================================================
+        pose_result = (
+            self.board_detector.estimate_box_pose_from_markers(
+                aruco_corners,
+                aruco_ids,
+                self.camera_intrinsics
+            )
+        )
 
-        corners = np.asarray(
-            board_corners,
-            dtype=np.float32
-        ).reshape(-1, 2)
-
-        if len(corners) != 4:
+        if pose_result is None:
             self.get_logger().warning(
-                f"[BOX TARGET] Invalid board corners: {len(corners)}"
+                "[BOX TARGET] Occlusion-tolerant solvePnP failed.",
+                throttle_duration_sec=1.0
             )
             return
 
-        center = np.mean(
-            corners,
-            axis=0
+        camera_position = pose_result["camera_position"]
+        rvec = pose_result["rvec"]
+        tvec = pose_result["tvec"]
+        marker_count = pose_result["marker_count"]
+        visible_ids = pose_result["visible_ids"]
+        tracking_quality = pose_result["tracking_quality"]
+        reprojection_error = pose_result["reprojection_error"]
+
+        self.get_logger().info(
+            f"[BOX TRACKING] quality={tracking_quality}, "
+            f"markers={marker_count}, ids={visible_ids}, "
+            f"reproj_error={reprojection_error:.2f}px",
+            throttle_duration_sec=1.0
         )
 
-        u = int(round(center[0]))
-        v = int(round(center[1]))
-
-
-        # ========================================================
-        # 2. Draw Box Target Center
-        # ========================================================
-
-        cv2.circle(
-            debug_frame,
-            (u, v),
-            10,
-            (0, 0, 255),
-            -1
+        board_corners = (
+            self.board_detector.project_board_corners(
+                rvec,
+                tvec,
+                self.camera_intrinsics
+            )
         )
 
+        if board_corners is not None:
+            debug_frame = self.board_detector.draw_board_boundary(
+                debug_frame,
+                board_corners
+            )
+
+        fx = float(self.camera_intrinsics["fx"])
+        fy = float(self.camera_intrinsics["fy"])
+        cx = float(self.camera_intrinsics["cx"])
+        cy = float(self.camera_intrinsics["cy"])
+
+        camera_matrix = np.array(
+            [
+                [fx, 0.0, cx],
+                [0.0, fy, cy],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float64
+        )
+
+        dist_coeffs = np.zeros((5, 1), dtype=np.float64)
+        box_center_3d = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+
+        projected_center, _ = cv2.projectPoints(
+            box_center_3d,
+            rvec,
+            tvec,
+            camera_matrix,
+            dist_coeffs
+        )
+
+        projected_center = projected_center.reshape(-1, 2)[0]
+        u = int(round(float(projected_center[0])))
+        v = int(round(float(projected_center[1])))
+
+        cv2.circle(debug_frame, (u, v), 10, (0, 0, 255), -1)
         cv2.putText(
             debug_frame,
             "BOX TARGET",
@@ -786,37 +798,14 @@ class VisionManager(Node):
             (0, 0, 255),
             2
         )
-
-
-
-        # ========================================================
-        # 3. Estimate Box Pose using ArUco
-        # ========================================================
-
-        pose_result = self.board_detector.estimate_box_pose(
-            marker_centers,
-            self.camera_intrinsics
-        )
-
-        if pose_result is None:
-            self.get_logger().warning(
-                "[BOX TARGET] solvePnP failed.",
-                throttle_duration_sec=1.0
-            )
-            return
-
-
-        camera_position, rvec, tvec = pose_result
-
-
-        # ========================================================
-        # 4. Camera -> Robot BASE Coordinate
-        # ========================================================
-
-        self.get_logger().info(
-            f"[BOX PNP CAMERA] "
-            f"camera_xyz={camera_position}",
-            throttle_duration_sec=1.0
+        cv2.putText(
+            debug_frame,
+            f"{tracking_quality} | {marker_count} marker(s) | IDs {visible_ids}",
+            (30, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (0, 255, 0),
+            2
         )
 
         if self.current_robot_pose is None:
@@ -839,35 +828,12 @@ class VisionManager(Node):
             )
         )
 
-
-    
-        self.get_logger().info(
-            f"[BOX TARGET PNP] "
-            f"pixel=({u}, {v}), "
-            f"camera_xyz={camera_position}, "
-            f"robot_xyz={robot_position}",
-            throttle_duration_sec=1.0
-)
-        # ========================================================
-        # DEBUG: Box Target Position
-        # ========================================================
-
         # self.get_logger().info(
-        #     f"[BOX TARGET] "
-        #     f"pixel=({u}, {v}), "
-        #     f"camera_xyz={camera_position}, "
-        #     f"robot_xyz={robot_position}",
+        #     f"[BOX TARGET PNP] quality={tracking_quality}, "
+        #     f"markers={marker_count}, pixel=({u}, {v}), "
+        #     f"camera_xyz={camera_position}, robot_xyz={robot_position}",
         #     throttle_duration_sec=1.0
         # )
-
-
-        # ========================================================
-        # 5. Create Target Detection
-        # ========================================================
-        #
-        # shape는 지금 제어에는 사용하지 않지만
-        # future use를 위해 field 자체는 유지.
-        # ========================================================
 
         target = {
             "type": "target",
@@ -875,11 +841,6 @@ class VisionManager(Node):
             "center": (u, v),
             "angle": 0.0,
         }
-
-
-        # ========================================================
-        # 6. Publish
-        # ========================================================
 
         self.publish_detection(
             target,
