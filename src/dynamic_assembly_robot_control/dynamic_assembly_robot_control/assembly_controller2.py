@@ -176,12 +176,12 @@ HOME_JOINT = [
 # ============================================================
 
 BOARD_TRACKING_POSE = [
-    -279.86,
-    -474.66,
-    362.31,
-    65.95,
-    -178.16,
-    157.31
+    260.75,
+    -527.91,
+    309.92,
+    88.63,
+    -178.76,
+    88.99
 ]
 
 OBJECT_VIEW_POSE = [
@@ -1140,8 +1140,8 @@ class AssemblyController2(Node):
         # ====================================================
 
         self.get_logger().info("[LV3 DROP] Releasing object.")
-        self.robot_init.open_gripper()
-        time.sleep(0.3)
+        self.robot_init.open_gripper_nowait()
+        
 
 
         # ====================================================
