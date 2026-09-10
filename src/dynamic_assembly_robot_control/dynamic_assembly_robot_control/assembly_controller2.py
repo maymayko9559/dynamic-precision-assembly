@@ -176,12 +176,12 @@ HOME_JOINT = [
 # ============================================================
 
 BOARD_TRACKING_POSE = [
-    -279.86,
-    -474.66,
-    362.31,
-    65.95,
-    -178.16,
-    157.31
+    260.75,
+    -521.91,
+    309.92,
+    88.63,
+    -178.76,
+    88.99
 ]
 
 OBJECT_VIEW_POSE = [
@@ -583,8 +583,8 @@ class AssemblyController2(Node):
 
         self.robot_init.move_joint(
             HOME_JOINT,
-            vel=30,
-            acc=30
+            vel=60,
+            acc=60
         )
 
         self.get_logger().info(
