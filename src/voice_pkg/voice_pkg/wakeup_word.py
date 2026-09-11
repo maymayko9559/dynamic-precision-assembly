@@ -3,17 +3,22 @@ from pathlib import Path
 import openwakeword
 import sounddevice as sd
 from openwakeword.model import Model
+from ament_index_python.packages import get_package_share_directory
 
 from .audio_device import resolve_input_device
 
 _MODEL_FILE = "hello_rokey_8332_32.tflite"
 _PKG_ROOT = Path(__file__).resolve().parent.parent
 _MODEL_CANDIDATES = [
+    Path(get_package_share_directory("voice_pkg")) / "resource" / _MODEL_FILE,
     _PKG_ROOT / "resource" / _MODEL_FILE,
     _PKG_ROOT / "share" / "voice_pkg" / "resource" / _MODEL_FILE,
 ]
-MODEL_NAME = next((str(p) for p in _MODEL_CANDIDATES if p.exists()), str(_MODEL_CANDIDATES[0]))
 
+MODEL_NAME = next(
+    (str(p) for p in _MODEL_CANDIDATES if p.exists()),
+    str(_MODEL_CANDIDATES[0])
+)
 SAMPLE_RATE = 16000
 FRAME = 1280
 

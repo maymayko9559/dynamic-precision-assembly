@@ -40,6 +40,7 @@
 # ============================================================
 
 
+#from build.dynamic_assembly_robot_control.build.lib.dynamic_assembly_robot_control.db_manager import DbManager
 import rclpy
 import time
 import math
@@ -297,6 +298,10 @@ class SensorNode(Node):
         self.get_logger().info(
             "SensorNode: object/target 구독 + /robot/current_pose 발행 시작"
         )
+        # ========================================================
+        # DB
+        # ========================================================
+        # self.db = DbManager()
 
     # --------------------------------------------------------
     # Object Callback  (vision_manager -> /vision/detected_object)
@@ -322,13 +327,15 @@ class SensorNode(Node):
 
         with self.state.lock:
             self.state.objects[msg.shape] = info
-
+        #self.db.insert_data("object", msg.shape , msg.x, msg.y, msg.z, msg.angle)
+        #self.get_logger().warn("오브젝트 데이터 삽입 완료")
         self.get_logger().info(
             f"[OBJECT UPDATE] shape={msg.shape}, "
             f"xyz=({info['x']:.1f}, {info['y']:.1f}, {info['z']:.1f}), "
             f"angle={info['angle']:.1f}",
             throttle_duration_sec=0.5,
         )
+
 
     # --------------------------------------------------------
     # Target Callback  (tracking_node -> /tracking/predicted_target)
@@ -359,6 +366,8 @@ class SensorNode(Node):
             "coast": coast,
             "valid": valid,
         }
+        #self.db.insert_data("target", msg.shape , msg.x, msg.y, msg.z, msg.angle)
+        #self.get_logger().warn("타겟 데이터 삽입 완료")
 
         with self.state.lock:
             self.state.targets[msg.shape] = info
